@@ -12,41 +12,40 @@ export const TIMEFRAMES = {
 async function candles(symbol, interval) {
   const url = "https://api.binance.com/api/v3/klines?symbol=" + symbol + "&interval=" + interval + "&limit=60";
   try {
-    const response = await fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(9000) });
+    const response = await fetch(url, {headers:{accept:"application/json"},signal:AbortSignal.timeout(9000)});
     if (!response.ok) throw new Error("Binance candles HTTP " + response.status);
     const rows = await response.json();
     if (!Array.isArray(rows) || rows.length < 30) throw new Error("Недостаточно свечей Binance");
-    return rows.map(x => ({ open:Number(x[1]), high:Number(x[2]), low:Number(x[3]), close:Number(x[4]), volume:Number(x[5]), closeTime:Number(x[6]) }));
+    return rows.map(x => ({open:Number(x[1]),high:Number(x[2]),low:Number(x[3]),close:Number(x[4]),volume:Number(x[5]),closeTime:Number(x[6])}));
   } catch (binanceError) {
     const minutes={"1m":1,"5m":5,"15m":15,"30m":30}[interval];
-    if (!minutes) throw new Error("Binance недоступен для " + interval + ": " + binanceError.message);
     const pair=symbol.replace("BTC","XBT");
-    const response=await fetch("https://api.kraken.com/0/public/OHLC?pair="+pair+"&interval="+minutes,{headers:{accept:"application/json"},signal:AbortSignal.timeout(9000)});
-    if(!response.ok)throw new Error("Binance: "+binanceError.message+"; Kraken OHLC HTTP "+response.status);
-    const payload=await response.json();
-    if(payload.error?.length)throw new Error("Binance: "+binanceError.message+"; Kraken: "+payload.error.join(", "));
-    const rows=Object.entries(payload.result||{}).find(([key])=>key!=="last")?.[1]||[];
-    if(rows.length<30)throw new Error("Binance: "+binanceError.message+"; Kraken: недостаточно свечей");
-    return rows.map(x=>({open:Number(x[1]),high:Number(x[2]),low:Number(x[3]),close:Number(x[4]),volume:Number(x[6]),closeTime:Number(x[0])*1000+minutes*60000-1}));
-  }
-}
-async function currentPrice(symbol) {
-  try {
-    const response=await fetch("https://api.binance.com/api/v3/ticker/price?symbol="+symbol,{signal:AbortSignal.timeout(7000)});
-    if(!response.ok)throw new Error("Binance ticker HTTP "+response.status);
-    const data=await response.json(),price=Number(data.price);
-    if(Number.isFinite(price)&&price>0)return price;
-    throw new Error("Некорректная цена Binance");
-  } catch(binanceError) {
-    const pair=symbol.replace("BTC","XBT");
-    const response=await fetch("https://api.kraken.com/0/public/Ticker?pair="+pair,{signal:AbortSignal.timeout(7000)});
-    if(!response.ok)throw new Error("Binance: "+binanceError.message+"; Kraken ticker HTTP "+response.status);
-    const data=await response.json();
-    if(data.error?.length)throw new Error("Binance: "+binanceError.message+"; Kraken: "+data.error.join(", "));
-    const row=Object.entries(data.result||{}).find(([key])=>key!=="last")?.[1];
-    const price=Number(row?.c?.[0]);
-    if(!Number.isFinite(price)||price<=0)throw new Error("Binance: "+binanceError.message+"; Kraken не вернул цену");
-    return price;
+    if(minutes) {
+      try {
+        const response=await fetch("https://api.kraken.com/0/public/OHLC?pair="+pair+"&interval="+minutes,{headers:{accept:"application/json"},signal:AbortSignal.timeout(9000)});
+        if(!response.ok)throw new Error("Kraken OHLC HTTP "+response.status);
+        const payload=await response.json();
+        if(payload.error?.length)throw new Error(payload.error.join(", "));
+        const rows=Object.entries(payload.result||{}).find(([key])=>key!=="last")?.[1]||[];
+        if(rows.length>=30)return rows.map(x=>({open:Number(x[1]),high:Number(x[2]),low:Number(x[3]),close:Number(x[4]),volume:Number(x[6]),closeTime:Number(x[0])*1000+minutes*60000-1}));
+      } catch(krakenError) {
+        if(!Number.isFinite(minutes))throw new Error("Binance: "+binanceError.message+"; Kraken: "+krakenError.message);
+      }
+    }
+    try {
+      const bar={"1m":"1m","5m":"5m","15m":"15m","30m":"30m"}[interval];
+      if(!bar)throw new Error("Неподдерживаемый таймфрейм");
+      const instrument=symbol.replace("USDT","-USDT");
+      const response=await fetch("https://www.okx.com/api/v5/market/candles?instId="+instrument+"&bar="+bar+"&limit=60",{headers:{accept:"application/json"},signal:AbortSignal.timeout(9000)});
+      if(!response.ok)throw new Error("OKX candles HTTP "+response.status);
+      const payload=await response.json();
+      if(payload.code!=="0"||!Array.isArray(payload.data))throw new Error(payload.msg||"OKX candles response error");
+      const rows=payload.data.slice().reverse();
+      if(rows.length<30)throw new Error("OKX: недостаточно свечей");
+      return rows.map(x=>({open:Number(x[1]),high:Number(x[2]),low:Number(x[3]),close:Number(x[4]),volume:Number(x[5]),closeTime:Number(x[0])+({"1m":60000,"5m":300000,"15m":900000,"30m":1800000}[interval])-1}));
+    } catch(okxError) {
+      throw new Error("Binance: "+binanceError.message+"; резервные свечи недоступны: "+okxError.message);
+    }
   }
 }
 function ema(values, period) {
