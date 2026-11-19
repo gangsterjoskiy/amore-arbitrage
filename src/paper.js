@@ -263,6 +263,7 @@ function analyze(rows) {
   let direction=up>down?"UP":down>up?"DOWN":null,score=Math.max(up,down);
   let rejection="";
   if(strength.adx<18)rejection="слабый тренд / боковой рынок (ADX ниже 18)";
+  else if(direction&&Math.abs(up-down)<2)rejection="противоречивые факторы: нет перевеса минимум в 2 подтверждения";
   else if(volatilitySpike)rejection="аномально большая последняя свеча — риск разворота";
   else if(direction==="UP"&&nearResistance)rejection="цена слишком близко к сопротивлению";
   else if(direction==="DOWN"&&nearSupport)rejection="цена слишком близко к поддержке";
@@ -314,15 +315,18 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
     }
     return {...task,signal};
   }catch(e){return {...task,error:task.symbol+" "+task.interval+": "+e.message};}}));
-  const candidates=results.filter(x=>x.signal?.direction).map(x=>({symbol:x.symbol,timeframe:x.interval,...x.signal}));
-  candidates.sort((a,b)=>b.score-a.score||TIMEFRAMES[b.timeframe].rank-TIMEFRAMES[a.timeframe].rank);
+  let candidates=results.filter(x=>x.signal?.direction).map(x=>({symbol:x.symbol,timeframe:x.interval,...x.signal}));
+  if(requestedTimeframe==="auto"){
+    candidates=candidates.map(candidate=>({...candidate,agreement:candidates.filter(other=>other.symbol===candidate.symbol&&other.direction===candidate.direction).length})).filter(candidate=>candidate.agreement>=2);
+  }else candidates=candidates.map(candidate=>({...candidate,agreement:1}));
+  candidates.sort((a,b)=>b.score-a.score||b.agreement-a.agreement||TIMEFRAMES[b.timeframe].rank-TIMEFRAMES[a.timeframe].rank);
   const diagnostics=results.filter(x=>x.signal).map(x=>({symbol:x.symbol,timeframe:x.interval,...x.signal.diagnostics}));
   const errors=results.filter(x=>x.error).map(x=>x.error),best=candidates[0];
   if(!best)return {none:true,errors,diagnostics,requestedTimeframe};
   const entry=await currentPrice(best.symbol);
   const now=Date.now(),duration=TIMEFRAMES[best.timeframe].expiryMs;
   const id=String(chatId)+":"+now+":"+crypto.randomUUID();
-  const trade={id,symbol:best.symbol,timeframe:best.timeframe,direction:best.direction,entry,stake:TRADE_STAKE,payout:PAYOUT,openedAt:now,entryAt:now,entryTimeMsk:mskTime(now),settleAt:now+duration,expiryMs:duration,reasons:best.reasons,score:best.score,analysis:best.analysis,signalCandleCloseTime:best.candleCloseTime,assetType:STOCKS.includes(best.symbol)?"stock":FOREX_PAIRS.includes(best.symbol)?"forex":"crypto",marketSource:STOCKS.includes(best.symbol)?"Yahoo Finance · обычный биржевой рынок":FOREX_PAIRS.includes(best.symbol)?"Yahoo Finance · Forex spot (не поток Pocket Option)":"агрегированные спотовые котировки"};
+  const trade={id,symbol:best.symbol,timeframe:best.timeframe,direction:best.direction,entry,stake:TRADE_STAKE,payout:PAYOUT,openedAt:now,entryAt:now,entryTimeMsk:mskTime(now),settleAt:now+duration,expiryMs:duration,reasons:best.reasons,score:best.score,timeframeAgreement:best.agreement,analysis:best.analysis,signalCandleCloseTime:best.candleCloseTime,assetType:STOCKS.includes(best.symbol)?"stock":FOREX_PAIRS.includes(best.symbol)?"forex":"crypto",marketSource:STOCKS.includes(best.symbol)?"Yahoo Finance · обычный биржевой рынок":FOREX_PAIRS.includes(best.symbol)?"Yahoo Finance · Forex spot (не поток Pocket Option)":"агрегированные спотовые котировки"};
   const tradeKey="paper:trading:"+chatId+":"+now+":"+crypto.randomUUID();
   await env.SUBSCRIBERS.put(tradeKey,JSON.stringify(trade),{expirationTtl:Math.ceil(duration/1000)+300});
   return {trade};
@@ -359,5 +363,5 @@ export function formatOpenTrade(trade) {
   const a=trade.analysis||{};
   const assetLabel=trade.assetType==="stock"?"Акция":trade.assetType==="forex"?"Валютная пара":"Криптовалюта";
   const symbolLabel=trade.symbol.endsWith("USDT")?trade.symbol.replace("USDT","/USDT"):trade.symbol.length===6?trade.symbol.slice(0,3)+"/"+trade.symbol.slice(3):trade.symbol;
-  return "📊 <b>A|MORE SIGNALS — ДЕМО-ПРОГНОЗ</b>\\n\\n<b>"+assetLabel+":</b> "+symbolLabel+"\\n"+(trade.direction==="UP"?"🟢 <b>СТАВКА: ВВЕРХ ↑</b>":"🔴 <b>СТАВКА: ВНИЗ ↓</b>")+"\\n\\n<b>Время входа: "+(trade.entryTimeMsk||mskTime(trade.entryAt||trade.openedAt))+" МСК</b>\\n<b>Таймфрейм:</b> "+tf+" · экспирация "+TIMEFRAMES[tf].label+"\\n<b>Цена на момент сигнала:</b> "+trade.entry+"\\n<b>Ожидаемое окончание:</b> "+mskTime(trade.settleAt)+" МСК\\n\\n<b>ПОЧЕМУ ЭТО НАПРАВЛЕНИЕ</b>\\n"+(a.explanation||trade.reasons.join("; "))+"\\n\\n<b>Техническая картина</b>\\n• Тренд: "+(a.trend||"—")+"\\n• Свечной паттерн: "+(a.pattern||"—")+"\\n• RSI (14): "+(a.rsi??"—")+"\\n• Поддержка: "+(a.support??"—")+"\\n• Сопротивление: "+(a.resistance??"—")+"\\n• ADX (сила тренда): "+(a.adx??"—")+"\n• MACD: "+(a.macd??"—")+"\n• Структура: "+(a.structure??"—")+"\n• Подтверждения модели: "+trade.score+"/6\\n\\n<i>Источник: "+(trade.marketSource||"внешние рыночные данные")+". Не поток Pocket Option и не OTC-котировка. Сигнал не гарантирует результат; сверь инструмент и цену у брокера.</i>";
+  return "📊 <b>A|MORE SIGNALS — ДЕМО-ПРОГНОЗ</b>\\n\\n<b>"+assetLabel+":</b> "+symbolLabel+"\\n"+(trade.direction==="UP"?"🟢 <b>СТАВКА: ВВЕРХ ↑</b>":"🔴 <b>СТАВКА: ВНИЗ ↓</b>")+"\\n\\n<b>Время входа: "+(trade.entryTimeMsk||mskTime(trade.entryAt||trade.openedAt))+" МСК</b>\\n<b>Таймфрейм:</b> "+tf+" · экспирация "+TIMEFRAMES[tf].label+"\\n<b>Цена на момент сигнала:</b> "+trade.entry+"\\n<b>Ожидаемое окончание:</b> "+mskTime(trade.settleAt)+" МСК\\n\\n<b>ПОЧЕМУ ЭТО НАПРАВЛЕНИЕ</b>\\n"+(a.explanation||trade.reasons.join("; "))+"\\n\\n<b>Техническая картина</b>\\n• Тренд: "+(a.trend||"—")+"\\n• Свечной паттерн: "+(a.pattern||"—")+"\\n• RSI (14): "+(a.rsi??"—")+"\\n• Поддержка: "+(a.support??"—")+"\\n• Сопротивление: "+(a.resistance??"—")+"\\n• ADX (сила тренда): "+(a.adx??"—")+"\n• MACD: "+(a.macd??"—")+"\n• Структура: "+(a.structure??"—")+"\n• Подтверждения модели: "+trade.score+"/6\n• Согласование таймфреймов: "+(trade.timeframeAgreement||1)+"/3\\n\\n<i>Источник: "+(trade.marketSource||"внешние рыночные данные")+". Не поток Pocket Option и не OTC-котировка. Сигнал не гарантирует результат; сверь инструмент и цену у брокера.</i>";
 }
