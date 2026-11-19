@@ -30,6 +30,25 @@ async function candles(symbol, interval) {
     return rows.map(x=>({open:Number(x[1]),high:Number(x[2]),low:Number(x[3]),close:Number(x[4]),volume:Number(x[6]),closeTime:Number(x[0])*1000+minutes*60000-1}));
   }
 }
+async function currentPrice(symbol) {
+  try {
+    const response=await fetch("https://api.binance.com/api/v3/ticker/price?symbol="+symbol,{signal:AbortSignal.timeout(7000)});
+    if(!response.ok)throw new Error("Binance ticker HTTP "+response.status);
+    const data=await response.json(),price=Number(data.price);
+    if(Number.isFinite(price)&&price>0)return price;
+    throw new Error("Некорректная цена Binance");
+  } catch(binanceError) {
+    const pair=symbol.replace("BTC","XBT");
+    const response=await fetch("https://api.kraken.com/0/public/Ticker?pair="+pair,{signal:AbortSignal.timeout(7000)});
+    if(!response.ok)throw new Error("Binance: "+binanceError.message+"; Kraken ticker HTTP "+response.status);
+    const data=await response.json();
+    if(data.error?.length)throw new Error("Binance: "+binanceError.message+"; Kraken: "+data.error.join(", "));
+    const row=Object.entries(data.result||{}).find(([key])=>key!=="last")?.[1];
+    const price=Number(row?.c?.[0]);
+    if(!Number.isFinite(price)||price<=0)throw new Error("Binance: "+binanceError.message+"; Kraken не вернул цену");
+    return price;
+  }
+}
 function ema(values, period) {
   const k=2/(period+1); let result=values[0];
   for(let i=1;i<values.length;i++) result=values[i]*k+result*(1-k);
@@ -73,10 +92,7 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
   const diagnostics=results.filter(x=>x.signal).map(x=>({symbol:x.symbol,timeframe:x.interval,...x.signal.diagnostics}));
   const errors=results.filter(x=>x.error).map(x=>x.error),best=candidates[0];
   if(!best)return {none:true,errors,diagnostics,requestedTimeframe};
-  const response=await fetch("https://api.binance.com/api/v3/ticker/price?symbol="+best.symbol,{signal:AbortSignal.timeout(7000)});
-  if(!response.ok)throw new Error("Не удалось получить цену входа для "+best.symbol);
-  const ticker=await response.json(),entry=Number(ticker.price);
-  if(!Number.isFinite(entry)||entry<=0)throw new Error("Некорректная цена входа");
+  const entry=await currentPrice(best.symbol);
   const now=Date.now(),duration=TIMEFRAMES[best.timeframe].expiryMs;
   const trade={id:String(chatId)+":"+now,symbol:best.symbol,timeframe:best.timeframe,direction:best.direction,entry,stake:TRADE_STAKE,payout:PAYOUT,openedAt:now,settleAt:now+duration,expiryMs:duration,reasons:best.reasons,score:best.score};
   await env.SUBSCRIBERS.put(key,JSON.stringify(trade),{expirationTtl:Math.ceil(duration/1000)+300});
@@ -90,9 +106,7 @@ export async function settleTradingDemos(env) {
     let trade;try{trade=JSON.parse(raw);}catch{await env.SUBSCRIBERS.delete(item.name);continue;}
     if(Date.now()<trade.settleAt)continue;
     try{
-      const response=await fetch("https://api.binance.com/api/v3/ticker/price?symbol="+trade.symbol,{signal:AbortSignal.timeout(7000)});
-      if(!response.ok)continue;
-      const quote=await response.json(),exit=Number(quote.price);if(!Number.isFinite(exit)||exit<=0)continue;
+      const exit=await currentPrice(trade.symbol);if(!Number.isFinite(exit)||exit<=0)continue;
       const outcome=exit===trade.entry?"draw":(trade.direction==="UP"?exit>trade.entry:exit<trade.entry)?"win":"loss";
       const pnl=outcome==="win"?trade.stake*trade.payout:outcome==="loss"?-trade.stake:0;
       await applyDemoResult(env,item.name.slice("paper:trading:".length),"trading",pnl,outcome);
