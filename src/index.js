@@ -372,6 +372,8 @@ export default {
     if (url.pathname === "/api/account" && request.method === "GET") {
       try {
         const chatId = await telegramMiniAppUser(request, env);
+        // Reconcile expired demo forecasts before showing the account state.
+        await settleTradingDemos(env);
         const account = await getDemoAccount(env, chatId);
         const rawTrade = await env.SUBSCRIBERS.get("paper:trading:" + chatId);
         const history = await getDemoHistory(env, chatId);
