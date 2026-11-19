@@ -2,7 +2,7 @@ name: Validate
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, feature/demo-balances-arbi-trading]
 jobs:
   syntax:
     runs-on: ubuntu-latest
