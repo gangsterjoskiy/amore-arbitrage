@@ -154,7 +154,7 @@ async function telegramMiniAppUser(request, env) {
   const receivedHash = params.get("hash");
   const authDate = Number(params.get("auth_date"));
   if (!receivedHash || !Number.isFinite(authDate) || Math.abs(Date.now()/1000-authDate) > 86400) throw new Error("Сессия Telegram устарела. Закрой и снова открой Mini App.");
-  const checkString = [...params.entries()].filter(([key]) => key !== "hash").sort(([a],[b]) => a.localeCompare(b)).map(([key,value]) => key + "=" + value).join("\n");
+  const checkString = [...params.entries()].filter(([key]) => key !== "hash").sort(([a],[b]) => a < b ? -1 : a > b ? 1 : 0).map(([key,value]) => key + "=" + value).join("\n");
   const encoder = new TextEncoder();
   const secretBase = await crypto.subtle.importKey("raw", encoder.encode("WebAppData"), {name:"HMAC",hash:"SHA-256"}, false, ["sign"]);
   const secret = await crypto.subtle.sign("HMAC", secretBase, encoder.encode(env.TELEGRAM_BOT_TOKEN));
