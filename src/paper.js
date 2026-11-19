@@ -19,6 +19,7 @@ async function candles(symbol, interval) {
     if(!response.ok)throw new Error("Yahoo Finance HTTP "+response.status);
     const payload=await response.json(),result=payload.chart?.result?.[0];
     if(payload.chart?.error||!result)throw new Error(payload.chart?.error?.description||"Yahoo Finance: нет данных для "+symbol);
+    if(result.meta?.marketState&&result.meta.marketState!=="REGULAR")throw new Error("Биржа акций закрыта или торгуется вне основной сессии. Обычные акции временно недоступны.");
     const q=result.indicators?.quote?.[0],times=result.timestamp||[];
     const rows=times.map((t,i)=>({open:Number(q?.open?.[i]),high:Number(q?.high?.[i]),low:Number(q?.low?.[i]),close:Number(q?.close?.[i]),volume:Number(q?.volume?.[i]||0),closeTime:t*1000+({"1m":60000,"5m":300000,"15m":900000,"30m":1800000,"1h":3600000,"4h":14400000}[interval])-1}))
       .filter(x=>[x.open,x.high,x.low,x.close,x.closeTime].every(Number.isFinite)&&x.open>0&&x.high>0&&x.low>0&&x.close>0);
