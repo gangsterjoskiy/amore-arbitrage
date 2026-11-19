@@ -487,7 +487,34 @@ export default {
             const candles=payload.data.slice().reverse().map(x=>[Number(x[0]),x[1],x[2],x[3],x[4],x[5],Number(x[0])+({"1m":60000,"5m":300000,"15m":900000,"30m":1800000,"1h":3600000,"4h":14400000}[interval])-1]);
             if(candles.length<30)throw new Error("OKX вернул недостаточно свечей");
             return Response.json(candles,{headers:{"cache-control":"no-store","x-market-source":"OKX"}});
-          } catch(okxError) { return Response.json({error:"Binance: "+binanceError.message+"; Kraken: "+krakenError.message+"; OKX: "+okxError.message},{status:502}); }
+          } catch(okxError) {
+            const duration={"1m":60000,"5m":300000,"15m":900000,"30m":1800000,"1h":3600000,"4h":14400000}[interval];
+            const gateInterval={"1m":"1m","5m":"5m","15m":"15m","30m":"30m","1h":"1h","4h":"4h"}[interval];
+            try {
+              const pair=symbol.replace("USDT","_USDT");
+              const response=await fetch("https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair="+pair+"&interval="+gateInterval+"&limit=60",{headers:{accept:"application/json"},signal:AbortSignal.timeout(9000)});
+              if(!response.ok)throw new Error("Gate.io candles HTTP "+response.status);
+              const rows=await response.json();
+              if(!Array.isArray(rows))throw new Error("Gate.io: некорректный ответ");
+              const candles=rows.slice().sort((a,b)=>Number(a[0])-Number(b[0])).map(x=>[Number(x[0])*1000,x[5],x[3],x[4],x[2],x[6],Number(x[0])*1000+duration-1]);
+              if(candles.length<30)throw new Error("Gate.io: недостаточно свечей");
+              return Response.json(candles,{headers:{"cache-control":"no-store","x-market-source":"Gate.io"}});
+            } catch(gateError) {
+              try {
+                const type={"1m":"1min","5m":"5min","15m":"15min","30m":"30min","1h":"1hour","4h":"4hour"}[interval];
+                const pair=symbol.replace("USDT","-USDT");
+                const response=await fetch("https://api.kucoin.com/api/v1/market/candles?symbol="+pair+"&type="+type,{headers:{accept:"application/json"},signal:AbortSignal.timeout(9000)});
+                if(!response.ok)throw new Error("KuCoin candles HTTP "+response.status);
+                const payload=await response.json();
+                if(payload.code!=="200000"||!Array.isArray(payload.data))throw new Error("KuCoin: некорректный ответ");
+                const candles=payload.data.slice().reverse().map(x=>[Number(x[0])*1000,x[1],x[3],x[4],x[2],x[5],Number(x[0])*1000+duration-1]);
+                if(candles.length<30)throw new Error("KuCoin: недостаточно свечей");
+                return Response.json(candles,{headers:{"cache-control":"no-store","x-market-source":"KuCoin"}});
+              } catch(kucoinError) {
+                return Response.json({error:"Binance: "+binanceError.message+"; Kraken: "+krakenError.message+"; OKX: "+okxError.message+"; Gate.io: "+gateError.message+"; KuCoin: "+kucoinError.message},{status:502});
+              }
+            }
+          }
         }
       }
     }
