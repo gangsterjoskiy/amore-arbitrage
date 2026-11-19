@@ -19,7 +19,10 @@ function aggregateCandles(rows,minutes){
   for(const row of rows){const start=Math.floor((row.closeTime+1-size)/size)*size;let b=buckets.get(start);if(!b){b={open:row.open,high:row.high,low:row.low,close:row.close,volume:row.volume||0,closeTime:start+size-1,count:0};buckets.set(start,b);}else{b.high=Math.max(b.high,row.high);b.low=Math.min(b.low,row.low);b.close=row.close;b.volume+=row.volume||0;}b.count++;}
   return [...buckets.values()].filter(b=>b.count===minutes).sort((a,b)=>a.closeTime-b.closeTime);
 }
-async function yahooChart(symbol,params) {
+// Coalesce identical Yahoo requests across simultaneous analyses in the same Worker isolate.
+const yahooChartCache=new Map();
+const yahooChartInflight=new Map();
+async function yahooChartUncached(symbol,params) {
   const failures=[];
   for(const host of ["query1.finance.yahoo.com","query2.finance.yahoo.com"]){
     try{
@@ -31,6 +34,19 @@ async function yahooChart(symbol,params) {
     }catch(e){failures.push(host+": "+e.message);}
   }
   throw new Error("Yahoo Finance: "+failures.join("; "));
+}
+async function yahooChart(symbol,params) {
+  const key=symbol+"?"+params,now=Date.now(),cached=yahooChartCache.get(key);
+  if(cached&&cached.expiresAt>now)return cached.value;
+  if(cached)yahooChartCache.delete(key);
+  if(yahooChartInflight.has(key))return yahooChartInflight.get(key);
+  const request=yahooChartUncached(symbol,params).then(value=>{
+    yahooChartCache.set(key,{value,expiresAt:Date.now()+12000});
+    if(yahooChartCache.size>100){const oldest=yahooChartCache.keys().next().value;yahooChartCache.delete(oldest);}
+    return value;
+  }).finally(()=>yahooChartInflight.delete(key));
+  yahooChartInflight.set(key,request);
+  return request;
 }
 async function candles(symbol, interval) {
   if (FOREX_PAIRS.includes(symbol)) {
@@ -339,7 +355,7 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
       results[index]={...task,signal};
     }catch(e){results[index]={...task,error:task.symbol+" "+task.interval+": "+e.message};}
   }};
-  await Promise.all(Array.from({length:Math.min(5,tasks.length)},()=>worker()));
+  await Promise.all(Array.from({length:Math.min(2,tasks.length)},()=>worker()));
   const rawCandidates=results.filter(x=>x.signal?.direction).map(x=>({symbol:x.symbol,timeframe:x.interval,...x.signal}));
   let candidates=rawCandidates;
   if(requestedTimeframe==="auto"&&requestedMode!=="atm"){
@@ -351,7 +367,13 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
   const errors=results.filter(x=>x.error).map(x=>x.error),best=candidates[0];
   if(!best)return {none:true,errors,diagnostics,requestedTimeframe};
   let entry,entrySource="текущая котировка";
-  try{entry=await currentPrice(best.symbol);}catch{entry=best.entry;entrySource="последняя закрытая реальная свеча (резерв)";}
+  // Forex candles already provide a verified close; avoid a second Yahoo request for the same signal.
+  if(FOREX_PAIRS.includes(best.symbol)){
+    entry=best.entry;
+    entrySource="последняя закрытая реальная Forex-свеча";
+  }else{
+    try{entry=await currentPrice(best.symbol);}catch{entry=best.entry;entrySource="последняя закрытая реальная свеча (резерв)";}
+  }
   if(!Number.isFinite(entry)||entry<=0)throw new Error("Нет достоверной цены входа для выбранного сигнала.");
   const now=Date.now(),duration=TIMEFRAMES[best.timeframe].expiryMs;
   const id=String(chatId)+":"+now+":"+crypto.randomUUID();
