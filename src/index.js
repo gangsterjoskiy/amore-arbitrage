@@ -258,6 +258,7 @@ async function handle(update, env) {
   } else if (command === "/arbi_demo" || action === "arbi_demo") {
     await send(env, chatId, "🔎 A|MORE Arbitrage проверяет текущие межбиржевые котировки…");
     try {
+      if (await env.SUBSCRIBERS.get("user:stop:" + chatId)) throw new Error("A|MORE STOP включён. Возобнови работу кнопкой RESUME.");
       const account = await getDemoAccount(env, chatId);
       const stake = 100;
       if (account.arbi.balance < stake) throw new Error("На демо-балансе A|MORE Arbitrage недостаточно средств.");
