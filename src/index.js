@@ -169,7 +169,7 @@ async function handle(update, env) {
       if (payload.action === "signal_analysis" && ["1m","5m","15m","30m","auto"].includes(payload.timeframe)) webAction = "trade:" + payload.timeframe;
     } catch {}
   }
-  const startArg = command === "/start" ? (msg?.text || "").trim().split(/\\s+/)[1] : null;
+  const startArg = command === "/start" ? (msg?.text || "").trim().split(/\s+/)[1] : null;
   if (!webAction && startArg?.startsWith("signals_")) {
     const requested = startArg.slice(8);
     if (["1m","5m","15m","30m","auto"].includes(requested)) webAction = "trade:" + requested;
