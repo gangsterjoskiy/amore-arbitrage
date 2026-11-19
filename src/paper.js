@@ -42,7 +42,7 @@ function analyze(rows) {
   return {direction:direction&&score>=3?direction:null,score,reasons:direction==="UP"?upReasons:direction==="DOWN"?downReasons:[],entry:last.close,candleCloseTime:last.closeTime,
     diagnostics:{ema:fast>slow?"бычья":fast<slow?"медвежья":"нейтральная",rsi:Number(momentum.toFixed(1)),candle:last.close>last.open&&last.close>prev.close?"бычья":last.close<last.open&&last.close<prev.close?"медвежья":"нейтральная",score,direction:direction||"нет"}};
 }
-export async function openTradingDemo(env,chatId,requestedTimeframe="auto") {
+export async function openTradingDemo(env,chatId,requestedTimeframe="auto",requestedPair="ALL") {
   if(!env.SUBSCRIBERS)throw new Error("KV namespace SUBSCRIBERS is not configured");
   const key="paper:trading:"+chatId,active=await env.SUBSCRIBERS.get(key);
   if(active)return {active:JSON.parse(active)};
@@ -50,7 +50,7 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto") {
   if(account.trading.balance<TRADE_STAKE)throw new Error("На демо-балансе A|MORE Signals недостаточно средств.");
   const intervals=requestedTimeframe==="auto"?Object.keys(TIMEFRAMES):[requestedTimeframe];
   if(!TIMEFRAMES[requestedTimeframe]&&requestedTimeframe!=="auto")throw new Error("Неизвестный таймфрейм.");
-  const tasks=[];for(const interval of intervals)for(const symbol of PAIRS)tasks.push({interval,symbol});
+  if(requestedPair!=="ALL"&&!PAIRS.includes(requestedPair))throw new Error("Неизвестная валютная пара.");\n  const selectedPairs=requestedPair==="ALL"?PAIRS:[requestedPair];\n  const tasks=[];for(const interval of intervals)for(const symbol of selectedPairs)tasks.push({interval,symbol});
   const results=await Promise.all(tasks.map(async task=>{try{return {...task,signal:analyze(await candles(task.symbol,task.interval))};}catch(e){return {...task,error:task.symbol+" "+task.interval+": "+e.message};}}));
   const candidates=results.filter(x=>x.signal?.direction).map(x=>({symbol:x.symbol,timeframe:x.interval,...x.signal}));
   candidates.sort((a,b)=>b.score-a.score||TIMEFRAMES[b.timeframe].rank-TIMEFRAMES[a.timeframe].rank);
