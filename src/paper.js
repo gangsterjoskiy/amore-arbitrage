@@ -165,8 +165,16 @@ function analyze(rows) {
   if(patterns.bull.length){up++;upReasons.push("свечной паттерн: "+patterns.bull.join(", "));}
   if(patterns.bear.length){down++;downReasons.push("свечной паттерн: "+patterns.bear.join(", "));}
   const direction=up>down?"UP":down>up?"DOWN":null,score=Math.max(up,down);
-  return {direction:direction&&score>=3?direction:null,score,reasons:direction==="UP"?upReasons:direction==="DOWN"?downReasons:[],entry:last.close,candleCloseTime:last.closeTime,
-    diagnostics:{ema:fast>slow?"бычья":fast<slow?"медвежья":"нейтральная",rsi:Number(momentum.toFixed(1)),candle:last.close>last.open&&last.close>prev.close?"бычья":last.close<last.open&&last.close<prev.close?"медвежья":"нейтральная",patterns,score,direction:direction||"нет"}};
+  const trend=fast>slow?"восходящий":fast<slow?"нисходящий":"боковой";
+  const support=Math.min(...closed.slice(-20).map(x=>x.low));
+  const resistance=Math.max(...closed.slice(-20).map(x=>x.high));
+  const activePatterns=direction==="UP"?patterns.bull:direction==="DOWN"?patterns.bear:[];
+  const patternText=activePatterns.length?activePatterns.join(", "):"чёткого свечного паттерна нет";
+  const analysis={trend,rsi:Number(momentum.toFixed(1)),pattern:patternText,support,resistance,
+    candle:last.close>last.open&&last.close>prev.close?"бычья":last.close<last.open&&last.close<prev.close?"медвежья":"нейтральная",
+    explanation:(direction==="UP"?upReasons:direction==="DOWN"?downReasons:[]).join("; ")};
+  return {direction:direction&&score>=3?direction:null,score,reasons:direction==="UP"?upReasons:direction==="DOWN"?downReasons:[],entry:last.close,candleCloseTime:last.closeTime,analysis,
+    diagnostics:{ema:trend,rsi:analysis.rsi,candle:analysis.candle,patterns,score,direction:direction||"нет"}};
 }
 export async function openTradingDemo(env,chatId,requestedTimeframe="auto",requestedPair="ALL") {
   if(!env.SUBSCRIBERS)throw new Error("KV namespace SUBSCRIBERS is not configured");
@@ -188,7 +196,7 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
   if(!best)return {none:true,errors,diagnostics,requestedTimeframe};
   const entry=await currentPrice(best.symbol);
   const now=Date.now(),duration=TIMEFRAMES[best.timeframe].expiryMs;
-  const trade={id:String(chatId)+":"+now,symbol:best.symbol,timeframe:best.timeframe,direction:best.direction,entry,stake:TRADE_STAKE,payout:PAYOUT,openedAt:now,entryAt:now,entryTimeMsk:mskTime(now),settleAt:now+duration,expiryMs:duration,reasons:best.reasons,score:best.score};
+  const trade={id:String(chatId)+":"+now,symbol:best.symbol,timeframe:best.timeframe,direction:best.direction,entry,stake:TRADE_STAKE,payout:PAYOUT,openedAt:now,entryAt:now,entryTimeMsk:mskTime(now),settleAt:now+duration,expiryMs:duration,reasons:best.reasons,score:best.score,analysis:best.analysis,marketSource:"агрегированные спотовые котировки"};
   await env.SUBSCRIBERS.put(key,JSON.stringify(trade),{expirationTtl:Math.ceil(duration/1000)+300});
   return {trade};
 }
@@ -213,5 +221,6 @@ export async function settleTradingDemos(env) {
 }
 export function formatOpenTrade(trade) {
   const tf=trade.timeframe||"1m";
-  return "📈 <b>A|MORE SIGNALS — ДЕМО-ПРОГНОЗ</b>\n\n"+(trade.direction==="UP"?"🟢 <b>НАПРАВЛЕНИЕ: ВВЕРХ ↑</b>":"🔴 <b>НАПРАВЛЕНИЕ: ВНИЗ ↓</b>")+"\n\n<b>ВРЕМЯ ВХОДА: "+(trade.entryTimeMsk||mskTime(trade.entryAt||trade.openedAt))+" МСК</b>\nПара: <b>"+trade.symbol+"</b>\nТаймфрейм: <b>"+tf+" ("+TIMEFRAMES[tf].label+")</b>\nЦена на момент сигнала: <b>"+trade.entry+"</b>\nВиртуальная ставка: <b>"+trade.stake+" USDT</b>\nЭкспирация: <b>"+TIMEFRAMES[tf].label+"</b>\nОжидаемое закрытие: <b>"+mskTime(trade.settleAt)+" МСК</b>\n\n<b>Подтверждения модели:</b> "+trade.score+"/4\nФакторы: "+trade.reasons.join("; ")+"\n\n<i>Время указано по Москве. Экспериментальный прогноз, точность не подтверждена статистически.</i>";
+  const a=trade.analysis||{};
+  return "📊 <b>A|MORE SIGNALS — РЫНОЧНЫЙ ПРОГНОЗ</b>\n\n<b>Валютная пара:</b> "+trade.symbol.replace("USDT","/USDT")+"\n"+(trade.direction==="UP"?"🟢 <b>СТАВКА: ВВЕРХ ↑</b>":"🔴 <b>СТАВКА: ВНИЗ ↓</b>")+"\n\n<b>Время входа: "+(trade.entryTimeMsk||mskTime(trade.entryAt||trade.openedAt))+" МСК</b>\n<b>Таймфрейм:</b> "+tf+" · экспирация "+TIMEFRAMES[tf].label+"\n<b>Цена на момент сигнала:</b> "+trade.entry+"\n<b>Ожидаемое окончание:</b> "+mskTime(trade.settleAt)+" МСК\n\n<b>ПОЧЕМУ ЭТО НАПРАВЛЕНИЕ</b>\n"+(a.explanation||trade.reasons.join("; "))+"\n\n<b>Техническая картина</b>\n• Тренд: "+(a.trend||"—")+"\n• Свечной паттерн: "+(a.pattern||"—")+"\n• RSI (14): "+(a.rsi??"—")+"\n• Поддержка: "+(a.support??"—")+"\n• Сопротивление: "+(a.resistance??"—")+"\n• Подтверждения модели: "+trade.score+"/4\n\n<i>Источник: агрегированные спотовые котировки, не поток Pocket Option. Сигнал не является гарантией результата. Проверь цену у брокера перед входом.</i>";
 }
