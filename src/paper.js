@@ -139,7 +139,7 @@ export async function settleTradingDemos(env) {
       const token = env.TELEGRAM_BOT_TOKEN;
       if (token) await fetch("https://api.telegram.org/bot" + token + "/sendMessage", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ chat_id: item.name.slice("paper:trading:".length), text, parse_mode: "HTML" })
+        body: JSON.stringify({ chat_id: item.name.slice("paper:trading:".length), text, parse_mode: "HTML", reply_markup: { inline_keyboard: [[{text:"📊 A|MORE Arbitrage",callback_data:"scan"},{text:"📈 A|MORE Signals",callback_data:"trade"}],[{text:"💼 Демо-балансы",callback_data:"demo"},{text:"🧾 Статистика",callback_data:"stats"}]] } })
       });
     } catch (e) { console.error("Paper trade settlement:", item.name, e); }
   }
