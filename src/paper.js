@@ -8,21 +8,27 @@ export const STOCKS = ["AAPL","TSLA","MSFT","AMZN","NFLX","META","INTC","AMD","C
 function mskTime(timestamp) { return new Intl.DateTimeFormat("ru-RU", {timeZone:"Europe/Moscow",hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"}).format(new Date(timestamp)); }
 export const TIMEFRAMES = {
   "1m": { label: "1 минута", expiryMs: 60000, rank: 1 },
-  "5m": { label: "5 минут", expiryMs: 300000, rank: 2 }
+  "3m": { label: "3 минуты", expiryMs: 180000, rank: 2 },
+  "5m": { label: "5 минут", expiryMs: 300000, rank: 3 }
 };
+function aggregateCandles(rows,minutes){
+  const size=minutes*60000,buckets=new Map();
+  for(const row of rows){const start=Math.floor((row.closeTime+1-size)/size)*size;let b=buckets.get(start);if(!b){b={open:row.open,high:row.high,low:row.low,close:row.close,volume:row.volume||0,closeTime:start+size-1,count:0};buckets.set(start,b);}else{b.high=Math.max(b.high,row.high);b.low=Math.min(b.low,row.low);b.close=row.close;b.volume+=row.volume||0;}b.count++;}
+  return [...buckets.values()].filter(b=>b.count===minutes).sort((a,b)=>a.closeTime-b.closeTime);
+}
 async function candles(symbol, interval) {
   if (STOCKS.includes(symbol)) {
-    const bar={"1m":"1m","5m":"5m","15m":"15m","30m":"30m","1h":"60m","4h":"60m"}[interval];
+    const bar={"1m":"1m","3m":"1m","5m":"5m","15m":"15m","30m":"30m","1h":"60m","4h":"60m"}[interval];
     const response=await fetch("https://query1.finance.yahoo.com/v8/finance/chart/"+symbol+"?range=5d&interval="+bar,{headers:{accept:"application/json"},signal:AbortSignal.timeout(9000)});
     if(!response.ok)throw new Error("Yahoo Finance HTTP "+response.status);
     const payload=await response.json(),result=payload.chart?.result?.[0];
     if(payload.chart?.error||!result)throw new Error(payload.chart?.error?.description||"Yahoo Finance: нет данных для "+symbol);
     if(result.meta?.marketState&&result.meta.marketState!=="REGULAR")throw new Error("Биржа акций закрыта или торгуется вне основной сессии. Обычные акции временно недоступны.");
     const q=result.indicators?.quote?.[0],times=result.timestamp||[];
-    const rows=times.map((t,i)=>({open:Number(q?.open?.[i]),high:Number(q?.high?.[i]),low:Number(q?.low?.[i]),close:Number(q?.close?.[i]),volume:Number(q?.volume?.[i]||0),closeTime:t*1000+({"1m":60000,"5m":300000,"15m":900000,"30m":1800000,"1h":3600000,"4h":14400000}[interval])-1}))
+    const rows=times.map((t,i)=>({open:Number(q?.open?.[i]),high:Number(q?.high?.[i]),low:Number(q?.low?.[i]),close:Number(q?.close?.[i]),volume:Number(q?.volume?.[i]||0),closeTime:t*1000+({"1m":60000,"3m":60000,"5m":300000,"15m":900000,"30m":1800000,"1h":3600000,"4h":14400000}[interval])-1}))
       .filter(x=>[x.open,x.high,x.low,x.close,x.closeTime].every(Number.isFinite)&&x.open>0&&x.high>0&&x.low>0&&x.close>0);
     if(rows.length<30)throw new Error("Yahoo Finance: недостаточно свечей для "+symbol);
-    return rows;
+    return interval==="3m"?aggregateCandles(rows,3):rows;
   }
   const failures=[];
   const normalize=(rows,mapper)=>rows.map(mapper).filter(x=>[x.open,x.high,x.low,x.close,x.closeTime].every(Number.isFinite)&&x.open>0&&x.high>0&&x.low>0&&x.close>0);
@@ -33,7 +39,7 @@ async function candles(symbol, interval) {
     if(!Array.isArray(rows)||rows.length<30)throw new Error("недостаточно свечей");
     return normalize(rows,x=>({open:Number(x[1]),high:Number(x[2]),low:Number(x[3]),close:Number(x[4]),volume:Number(x[5]),closeTime:Number(x[6])}));
   } catch(e) { failures.push("Binance: "+e.message); }
-  const minutes={"1m":1,"5m":5,"15m":15,"30m":30}[interval];
+  const minutes={"1m":1,"3m":1,"5m":5,"15m":15,"30m":30}[interval];
   if(minutes)try {
     const pair=symbol.replace("BTC","XBT");
     const response=await fetch("https://api.kraken.com/0/public/OHLC?pair="+pair+"&interval="+minutes,{headers:{accept:"application/json"},signal:AbortSignal.timeout(9000)});
@@ -42,7 +48,7 @@ async function candles(symbol, interval) {
     if(payload.error?.length)throw new Error(payload.error.join(", "));
     const rows=Object.entries(payload.result||{}).find(([key])=>key!=="last")?.[1]||[];
     const candles=normalize(rows,x=>({open:Number(x[1]),high:Number(x[2]),low:Number(x[3]),close:Number(x[4]),volume:Number(x[6]),closeTime:Number(x[0])*1000+minutes*60000-1}));
-    if(candles.length>=30)return candles;
+    if(candles.length>=30)return interval==="3m"?aggregateCandles(candles,3):candles;
     throw new Error("недостаточно свечей");
   } catch(e) { failures.push("Kraken: "+e.message); }
   const okxBar={"1m":"1m","5m":"5m","15m":"15m","30m":"30m"}[interval];
