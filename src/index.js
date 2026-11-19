@@ -215,13 +215,13 @@ async function dashboard(env) {
     })
   ]);
   const wanted = new Set(["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"]);
+  const scanData = scanResult.status === "fulfilled" ? scanResult.value : {
+    opportunities: [], exchanges: [], errors: [String(scanResult.reason?.message || scanResult.reason)],
+    diagnostics: {sharedPairs:0,depthRejected:0,bestBeforeThreshold:null,minNet:setting(env.MIN_NET_SPREAD_PERCENT,0.25,20),minDepth:minDepthFallback(env)},marketTickers:[]
+  };
   const tickers = tickerResult.status === "fulfilled"
     ? tickerResult.value.filter(x => wanted.has(x.symbol)).map(x => ({symbol:x.symbol,price:Number(x.lastPrice),change:Number(x.priceChangePercent)}))
     : (scanData.marketTickers || []);
-  const scanData = scanResult.status === "fulfilled" ? scanResult.value : {
-    opportunities: [], exchanges: [], errors: [String(scanResult.reason?.message || scanResult.reason)],
-    diagnostics: {sharedPairs:0,depthRejected:0,bestBeforeThreshold:null,minNet:setting(env.MIN_NET_SPREAD_PERCENT,0.25,20),minDepth:minDepthFallback(env)}
-  };
   const errors = [...(scanData.errors || [])];
   if (tickerResult.status === "rejected") errors.push(String(tickerResult.reason?.message || tickerResult.reason));
   return {...scanData,tickers,errors,marketStatus:tickers.length ? "live" : "offline",scanStatus:scanResult.status === "fulfilled" && scanData.scanAvailable !== false ? "live" : "unavailable"};
