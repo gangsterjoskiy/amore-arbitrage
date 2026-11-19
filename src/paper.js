@@ -206,20 +206,7 @@ function analyze(rows) {
 export async function openTradingDemo(env,chatId,requestedTimeframe="auto",requestedPair="ALL") {
   if(!env.SUBSCRIBERS)throw new Error("KV namespace SUBSCRIBERS is not configured");
   if(await env.SUBSCRIBERS.get("user:stop:"+chatId))throw new Error("A|MORE STOP включён. Возобнови работу кнопкой в Telegram-боте.");
-  const key="paper:trading:"+chatId;
-  let activeRaw=await env.SUBSCRIBERS.get(key);
-  if(activeRaw){
-    let active;
-    try{active=JSON.parse(activeRaw);}catch{await env.SUBSCRIBERS.delete(key);}
-    if(active){
-      if(Date.now()<Number(active.settleAt))return {active,remainingMs:Number(active.settleAt)-Date.now()};
-      // The expiry time has passed. Settle the old demo forecast before allowing a new one.
-      await settleTradingDemos(env);
-      activeRaw=await env.SUBSCRIBERS.get(key);
-      if(activeRaw)throw new Error("Срок прошлого прогноза истёк, но его результат пока не удалось рассчитать. Повтори позже — новый прогноз не будет подменять старый.");
-    }
-  }
-  const account=await getDemoAccount(env,chatId);
+  // Каждый запрос создаёт отдельный прогноз. Уже открытые прогнозы не блокируют новые.\n  const account=await getDemoAccount(env,chatId);
   if(account.trading.balance<TRADE_STAKE)throw new Error("На демо-балансе A|MORE Signals недостаточно средств.");
   const intervals=requestedTimeframe==="auto"?Object.keys(TIMEFRAMES):[requestedTimeframe];
   if(!TIMEFRAMES[requestedTimeframe]&&requestedTimeframe!=="auto")throw new Error("Неизвестный таймфрейм.");
@@ -244,8 +231,10 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
   if(!best)return {none:true,errors,diagnostics,requestedTimeframe};
   const entry=await currentPrice(best.symbol);
   const now=Date.now(),duration=TIMEFRAMES[best.timeframe].expiryMs;
-  const trade={id:String(chatId)+":"+now,symbol:best.symbol,timeframe:best.timeframe,direction:best.direction,entry,stake:TRADE_STAKE,payout:PAYOUT,openedAt:now,entryAt:now,entryTimeMsk:mskTime(now),settleAt:now+duration,expiryMs:duration,reasons:best.reasons,score:best.score,analysis:best.analysis,assetType:STOCKS.includes(best.symbol)?"stock":"crypto",marketSource:STOCKS.includes(best.symbol)?"Yahoo Finance · обычный биржевой рынок":"агрегированные спотовые котировки"};
-  await env.SUBSCRIBERS.put(key,JSON.stringify(trade),{expirationTtl:Math.ceil(duration/1000)+300});
+  const id=String(chatId)+":"+now+":"+crypto.randomUUID();
+  const trade={id,symbol:best.symbol,timeframe:best.timeframe,direction:best.direction,entry,stake:TRADE_STAKE,payout:PAYOUT,openedAt:now,entryAt:now,entryTimeMsk:mskTime(now),settleAt:now+duration,expiryMs:duration,reasons:best.reasons,score:best.score,analysis:best.analysis,assetType:STOCKS.includes(best.symbol)?"stock":"crypto",marketSource:STOCKS.includes(best.symbol)?"Yahoo Finance · обычный биржевой рынок":"агрегированные спотовые котировки"};
+  const tradeKey="paper:trading:"+chatId+":"+now+":"+crypto.randomUUID();
+  await env.SUBSCRIBERS.put(tradeKey,JSON.stringify(trade),{expirationTtl:Math.ceil(duration/1000)+300});
   return {trade};
 }
 export async function settleTradingDemos(env) {
@@ -259,11 +248,12 @@ export async function settleTradingDemos(env) {
       const exit=await currentPrice(trade.symbol);if(!Number.isFinite(exit)||exit<=0)continue;
       const outcome=exit===trade.entry?"draw":(trade.direction==="UP"?exit>trade.entry:exit<trade.entry)?"win":"loss";
       const pnl=outcome==="win"?trade.stake*trade.payout:outcome==="loss"?-trade.stake:0;
-      await applyDemoResult(env,item.name.slice("paper:trading:".length),"trading",pnl,outcome,{type:"signal",symbol:trade.symbol,timeframe:trade.timeframe,direction:trade.direction,entry:trade.entry,exit,stake:trade.stake,score:trade.score,entryAt:trade.entryAt,entryTimeMsk:trade.entryTimeMsk});
+      const chatId=item.name.slice("paper:trading:".length).split(":")[0];
+      await applyDemoResult(env,chatId,"trading",pnl,outcome,{type:"signal",signalId:trade.id,symbol:trade.symbol,timeframe:trade.timeframe,direction:trade.direction,entry:trade.entry,exit,stake:trade.stake,score:trade.score,entryAt:trade.entryAt,entryTimeMsk:trade.entryTimeMsk});
       await env.SUBSCRIBERS.delete(item.name);
       const label=outcome==="win"?"✅ ПРОГНОЗ СБЫЛСЯ":outcome==="loss"?"❌ ПРОГНОЗ НЕ СБЫЛСЯ":"➖ НИЧЬЯ";
       const text="⏱ <b>A|MORE Signals — результат демо-прогноза</b>\n"+label+"\nПара: <b>"+trade.symbol+"</b>\nТаймфрейм: <b>"+(trade.timeframe||"1m")+"</b>\nПрогноз: <b>"+trade.direction+"</b>\nВход: "+trade.entry+"\nЦена после экспирации: "+exit+"\nP/L: <b>"+(pnl>0?"+":"")+pnl.toFixed(2)+" USDT</b>\n<i>Демо-модель. Это не исполнение у брокера.</i>";
-      if(env.TELEGRAM_BOT_TOKEN)await fetch("https://api.telegram.org/bot"+env.TELEGRAM_BOT_TOKEN+"/sendMessage",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({chat_id:item.name.slice("paper:trading:".length),text,parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"📊 A|MORE Arbitrage",callback_data:"scan"},{text:"📈 A|MORE Signals",callback_data:"trade_menu"}],[{text:"💼 Демо-балансы",callback_data:"demo"},{text:"🧾 Статистика",callback_data:"stats"}]]}})});
+      if(env.TELEGRAM_BOT_TOKEN)await fetch("https://api.telegram.org/bot"+env.TELEGRAM_BOT_TOKEN+"/sendMessage",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({chat_id:chatId,text,parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"📊 A|MORE Arbitrage",callback_data:"scan"},{text:"📈 A|MORE Signals",callback_data:"trade_menu"}],[{text:"💼 Демо-балансы",callback_data:"demo"},{text:"🧾 Статистика",callback_data:"stats"}]]}})});
     }catch(e){console.error("Paper trade settlement:",item.name,e);}
   }
 }
