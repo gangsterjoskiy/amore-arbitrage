@@ -62,6 +62,7 @@ header{display:flex;align-items:center;justify-content:space-between;margin:4px 
 <div class="notice" id="accountNotice">Загружаем персональный демо-счёт…</div>
 <div class="notice" id="activeTrade">Активных прогнозов нет.</div>
 <div class="actions"><button class="primary" id="openDemo">ОТКРЫТЬ ДЕМО-СЧЁТ</button><button class="secondary" id="openStats">ПОЛНАЯ СТАТИСТИКА</button></div>
+<button class="danger" id="resetDemo" style="width:100%;margin-top:9px">СБРОСИТЬ ОБА ДЕМО-БАЛАНСА</button>
 </div>
 <div class="section"><h2>История</h2></div><div class="empty">История появится после завершения первых демо-операций. Реальные ордера отключены.</div>
 </section>
@@ -120,6 +121,7 @@ $('statsBtn').addEventListener('click',function(){botStart('stats')});
 $('dealsBtn').addEventListener('click',function(){botStart('demo')});
 $('openDemo').addEventListener('click',function(){botStart('demo')});
 $('openStats').addEventListener('click',function(){botStart('stats')});
+$('resetDemo').addEventListener('click',async function(){const b=this;if(b.dataset.confirm!=='1'){b.dataset.confirm='1';b.textContent='НАЖМИ ЕЩЁ РАЗ ДЛЯ ПОДТВЕРЖДЕНИЯ';return}b.disabled=true;try{await api('/api/reset','POST',{});b.dataset.confirm='0';b.textContent='СБРОСИТЬ ОБА ДЕМО-БАЛАНСА';$('accountNotice').textContent='Оба виртуальных счёта сброшены до 1 000 USDT.';$('activeTrade').textContent='Активных прогнозов нет.';await loadAccount()}catch(e){$('accountNotice').textContent='Сброс не выполнен: '+e.message;b.dataset.confirm='0';b.textContent='СБРОСИТЬ ОБА ДЕМО-БАЛАНСА'}finally{b.disabled=false}});
 $('runSignal').addEventListener('click',async function(){const b=this;b.disabled=true;b.textContent='АНАЛИЗИРУЕМ…';$('signalResult').textContent='Проверяем закрытые свечи и фильтры стратегии…';try{const data=await api('/api/signal','POST',{pair:signalPair,timeframe:signalTf});if(data.none){$('signalResult').textContent='Подтверждённого сигнала нет. Фильтры не ослаблялись.'+(data.errors&&data.errors.length?' Ошибки источников: '+data.errors.join(' · '):'');}else{const t=data.trade||data.active;$('signalResult').textContent='ДЕМО-ПРОГНОЗ '+t.symbol+' · '+t.timeframe+' · '+(t.direction==='UP'?'ВВЕРХ ↑':'ВНИЗ ↓')+' · вход '+t.entry+' · виртуальная ставка '+t.stake+' USDT';}await loadAccount()}catch(e){$('signalResult').textContent='Не удалось выполнить анализ: '+e.message}finally{b.disabled=false;b.textContent='ЗАПУСТИТЬ ДЕМО-АНАЛИЗ →'}});
 $('stopBtn').addEventListener('click',async function(){const b=this,resume=b.dataset.resume==='1';b.disabled=true;try{await api(resume?'/api/resume':'/api/stop','POST',{});b.dataset.resume=resume?'0':'1';b.textContent=resume?'STOP':'RESUME';b.className=resume?'danger':'primary';$('scanNote').textContent=resume?'Работа возобновлена.':'STOP включён: новые демо-прогнозы и автоматические уведомления приостановлены.';await loadAccount()}catch(e){$('scanNote').textContent='Не удалось изменить STOP: '+e.message}finally{b.disabled=false}});
 loadDashboard();loadAccount();setInterval(loadDashboard,30000);window.addEventListener('resize',function(){if($('markets').classList.contains('active'))loadCandles()});
