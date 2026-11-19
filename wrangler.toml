@@ -9,6 +9,10 @@ crons = ["* * * * *"]
 binding = "SUBSCRIBERS"
 id = "2cdb027c62064080b9f5f2ba422ac11a"
 
+[[previews.kv_namespaces]]
+binding = "SUBSCRIBERS"
+id = "611eab90872948cbbd55a44a07662a8c"
+
 [assets]
 directory = "./public"
 binding = "ASSETS"
