@@ -37,6 +37,7 @@ export async function getDemoAccount(env, chatId) {
 export async function resetDemoAccount(env, chatId) {
   const account = { arbi: emptyWallet(), trading: emptyWallet() };
   await env.SUBSCRIBERS.put("demo:" + chatId, JSON.stringify(account));
+  await env.SUBSCRIBERS.delete("paper:trading:" + chatId);
   return account;
 }
 
