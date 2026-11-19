@@ -100,7 +100,7 @@ async function tg(env, method, body) {
   return data.result;
 }
 const keyboard = { inline_keyboard: [
-  [{text:"◈ Открыть A|MORE Terminal",web_app:{url:"https://amore-arbitrage.hn29wknr7h.workers.dev/app/"}}],
+  [{text:"◈ Открыть A|MORE Terminal",web_app:{url:"https://amore-arbitrage.hn29wknr7h.workers.dev/"}}],
   [{text:"📊 A|MORE Arbitrage — сканировать",callback_data:"scan"}],
   [{text:"📈 A|MORE Signals — выбрать таймфрейм",callback_data:"trade_menu"}],
   [{text:"💼 Демо-балансы",callback_data:"demo"},{text:"🧾 Статистика",callback_data:"stats"}],
@@ -253,7 +253,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") return Response.json({ok:true,service:"A|More Arbitrage",version:"0.1.0"});
-    if (request.method === "GET" && (url.pathname === "/app" || url.pathname === "/app/")) {
+    if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/app" || url.pathname === "/app/")) {
       const assetUrl = new URL("/index.html", url.origin);
       return env.ASSETS ? env.ASSETS.fetch(new Request(assetUrl, request)) : new Response("Mini App assets are not configured",{status:503});
     }
