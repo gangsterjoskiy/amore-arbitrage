@@ -25,7 +25,7 @@ header{display:flex;align-items:center;justify-content:space-between;margin:4px 
 <div class="eyebrow">CONTROL CENTER / 01</div><h1 class="heading" id="mainHeading">Арбитражный терминал</h1><div class="sub">Публичные спотовые котировки · виртуальное тестирование</div>
 <div class="hero"><div class="hero-label" id="heroLabel">ЛУЧШИЙ РАСЧЁТНЫЙ NET-СПРЕД</div><div class="hero-value" id="bestSpread">—</div><div class="hero-foot" id="bestPair">Ожидание рыночных данных</div></div>
 <div class="grid">
-<div class="metric"><div class="metric-label">Биржи доступны</div><div class="metric-value" id="venues">— / 3</div></div>
+<div class="metric"><div class="metric-label">Биржи доступны</div><div class="metric-value" id="venues">— / 4</div></div>
 <div class="metric"><div class="metric-label">Общие пары</div><div class="metric-value" id="pairs">—</div></div>
 <div class="metric"><div class="metric-label">Возможности</div><div class="metric-value" id="opps">—</div></div>
 <div class="metric"><div class="metric-label">Net-фильтр</div><div class="metric-value">0.25%</div></div>
@@ -94,7 +94,7 @@ async function loadDashboard(){
   const r=await fetch('/api/dashboard',{cache:'no-store'});const d=await r.json();lastDashboard=d;
   if(!r.ok)throw new Error(d.error||'HTTP '+r.status);
   const live=Array.isArray(d.tickers)&&d.tickers.length>0;setStatus(live?'live':'offline',live?'MARKET LIVE':'OFFLINE');
-  $('venues').textContent=(d.exchanges||[]).length+' / 3';$('pairs').textContent=d.diagnostics&&d.diagnostics.sharedPairs!=null?Number(d.diagnostics.sharedPairs).toLocaleString('en-US'):'—';$('opps').textContent=(d.opportunities||[]).length;
+  $('venues').textContent=(d.exchanges||[]).length+' / 4';$('pairs').textContent=d.diagnostics&&d.diagnostics.sharedPairs!=null?Number(d.diagnostics.sharedPairs).toLocaleString('en-US'):'—';$('opps').textContent=(d.opportunities||[]).length;
   const selectedOpportunities=(d.opportunities||[]).filter(function(x){return arbiPair==='ALL'||x.symbol===arbiPair});const best=arbiPair==='ALL'?(d.diagnostics&&d.diagnostics.bestBeforeThreshold):(selectedOpportunities[0]||null);
   $('bestSpread').textContent=best?(best.net>0?'+':'')+best.net.toFixed(3)+'%':'—';
   $('bestPair').textContent=best?best.symbol+' · '+best.buyExchange+' → '+best.sellExchange:(d.scanStatus==='unavailable'?'Сканер ждёт доступности минимум двух бирж':'Нет спреда выше фильтра');
