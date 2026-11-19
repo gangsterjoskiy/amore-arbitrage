@@ -419,7 +419,19 @@ export default {
           if(!rows.length) throw new Error("Kraken не вернул свечи для "+symbol);
           const candles=rows.map(x=>{const start=Number(x[0])*1000;return [start,x[1],x[2],x[3],x[4],x[6],start+krakenInterval*60000-1]});
           return Response.json(candles,{headers:{"cache-control":"no-store","x-market-source":"Kraken"}});
-        } catch(krakenError) { return Response.json({error:"Binance: "+binanceError.message+"; Kraken: "+krakenError.message},{status:502}); }
+        } catch(krakenError) {
+          try {
+            const bar={"1m":"1m","5m":"5m","15m":"15m","30m":"30m","1h":"1H","4h":"4H"}[interval];
+            const instrument=symbol.replace("USDT","-USDT");
+            const response=await fetch("https://www.okx.com/api/v5/market/candles?instId="+instrument+"&bar="+bar+"&limit=60",{signal:AbortSignal.timeout(9000)});
+            if(!response.ok)throw new Error("OKX candles HTTP "+response.status);
+            const payload=await response.json();
+            if(payload.code!=="0"||!Array.isArray(payload.data))throw new Error(payload.msg||"OKX candles response error");
+            const candles=payload.data.slice().reverse().map(x=>[Number(x[0]),x[1],x[2],x[3],x[4],x[5],Number(x[0])+({"1m":60000,"5m":300000,"15m":900000,"30m":1800000,"1h":3600000,"4h":14400000}[interval])-1]);
+            if(candles.length<30)throw new Error("OKX вернул недостаточно свечей");
+            return Response.json(candles,{headers:{"cache-control":"no-store","x-market-source":"OKX"}});
+          } catch(okxError) { return Response.json({error:"Binance: "+binanceError.message+"; Kraken: "+krakenError.message+"; OKX: "+okxError.message},{status:502}); }
+        }
       }
     }
     // Register Telegram's webhook without exposing bot credentials.
