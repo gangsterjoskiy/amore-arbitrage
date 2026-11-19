@@ -240,8 +240,15 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
   if(requestedPair!=="ALL"&&!PAIRS.includes(requestedPair)&&!STOCKS.includes(requestedPair))throw new Error("Неизвестный актив.");
   const selectedPairs=requestedPair==="ALL"?(requestedAssetType==="crypto"?CRYPTO_PAIRS:FOREX_PAIRS):[requestedPair];
   const tasks=[];for(const interval of intervals)for(const symbol of selectedPairs)tasks.push({interval,symbol});
+  const forexBaseCache=new Map();
   const results=await Promise.all(tasks.map(async task=>{try{
-    const rows=await candles(task.symbol,task.interval);
+    let rows;
+    if(FOREX_PAIRS.includes(task.symbol)){
+      if(!forexBaseCache.has(task.symbol))forexBaseCache.set(task.symbol,candles(task.symbol,"1m"));
+      const base=await forexBaseCache.get(task.symbol);
+      rows=task.interval==="1m"?base:aggregateCandles(base,Number(task.interval.slice(0,-1)));
+      if(rows.length<30)throw new Error("недостаточно закрытых Forex-свечей");
+    }else rows=await candles(task.symbol,task.interval);
     const signal=analyze(rows);
     if(signal.candleCloseTime){
       const intervalMs=TIMEFRAMES[task.interval].expiryMs;
