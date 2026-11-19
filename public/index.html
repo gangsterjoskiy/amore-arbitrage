@@ -95,7 +95,7 @@ async function loadDashboard(){
   if(!r.ok)throw new Error(d.error||'HTTP '+r.status);
   const live=Array.isArray(d.tickers)&&d.tickers.length>0;setStatus(live?'live':'offline',live?'MARKET LIVE':'OFFLINE');
   $('venues').textContent=(d.exchanges||[]).length+' / 3';$('pairs').textContent=d.diagnostics&&d.diagnostics.sharedPairs!=null?Number(d.diagnostics.sharedPairs).toLocaleString('en-US'):'—';$('opps').textContent=(d.opportunities||[]).length;
-  const best=d.diagnostics&&d.diagnostics.bestBeforeThreshold;
+  const selectedOpportunities=(d.opportunities||[]).filter(function(x){return arbiPair==='ALL'||x.symbol===arbiPair});const best=arbiPair==='ALL'?(d.diagnostics&&d.diagnostics.bestBeforeThreshold):(selectedOpportunities[0]||null);
   $('bestSpread').textContent=best?(best.net>0?'+':'')+best.net.toFixed(3)+'%':'—';
   $('bestPair').textContent=best?best.symbol+' · '+best.buyExchange+' → '+best.sellExchange:(d.scanStatus==='unavailable'?'Сканер ждёт доступности минимум двух бирж':'Нет спреда выше фильтра');
   $('updated').textContent='ОБНОВЛЕНО '+new Date().toLocaleTimeString('ru-RU');
