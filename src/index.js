@@ -91,17 +91,18 @@ async function tg(env, method, body) {
   return data.result;
 }
 const keyboard = { inline_keyboard: [
-  [{text:"🔎 Сканировать рынок",callback_data:"scan"}],
-  [{text:"🔔 Подписаться",callback_data:"subscribe"},{text:"🔕 Отписаться",callback_data:"unsubscribe"}],
-  [{text:"🧪 Демо-балансы",callback_data:"demo"}],
-  [{text:"🟢 Арби — демо-сделка",callback_data:"arbi_demo"},{text:"🔵 Трейдинг — сигнал",callback_data:"trade"}],
+  [{text:"📊 A|MORE Arbitrage — сканировать",callback_data:"scan"}],
+  [{text:"📈 A|MORE Signals — прогноз",callback_data:"trade"}],
+  [{text:"💼 Демо-балансы",callback_data:"demo"},{text:"🧾 Статистика",callback_data:"stats"}],
+  [{text:"🔔 Уведомления: включить",callback_data:"subscribe"},{text:"🔕 выключить",callback_data:"unsubscribe"}],
+  [{text:"🧪 Тестовая сделка",callback_data:"arbi_demo"}],
   [{text:"ℹ️ Помощь",callback_data:"help"}]
 ]};
 async function send(env, chatId, text, extra = {}) {
-  return tg(env, "sendMessage", {chat_id:chatId,text,parse_mode:"HTML",disable_web_page_preview:true,...extra});
+  return tg(env, "sendMessage", {chat_id:chatId,text,parse_mode:"HTML",disable_web_page_preview:true,reply_markup:keyboard,...extra});
 }
 function help() {
-  return "🧭 <b>A|MORE</b>\n\n/trade — получить минутный демо-сигнал Трейдинга\n/arbi_demo — смоделировать сделку Арби\n/demo — показать виртуальные балансы\n/demo_reset — сбросить балансы и отменить активный демо-прогноз\n/scan — сканировать межбиржевые цены\n/subscribe — включить уведомления Арби\n/unsubscribe — отключить уведомления\n/help — помощь\n\nАрби оценивает расчётный net-спред по публичным котировкам. Трейдинг анализирует закрытые минутные свечи и проверяет прогноз после экспирации. Все сделки виртуальные; точность стратегий пока не подтверждена.";
+  return "🧭 <b>A|MORE — главное меню</b>\n\n<b>📊 A|MORE Arbitrage</b> — сравнение цен на спотовых биржах и расчёт net-спреда.\n<b>📈 A|MORE Signals</b> — анализ минутных свечей и виртуальные прогнозы направления.\n<b>💼 Демо-балансы</b> — отдельные виртуальные счета двух модулей.\n<b>🧾 Статистика</b> — результаты тестирования.\n\nВсе сделки виртуальные. Межбиржевой спред не означает, что ордера реально исполнимы. Точность сигналов не подтверждена статистически. Для управления используй кнопки меню ниже.";
 }
 function report(data, env) {
   const threshold = setting(env.MIN_NET_SPREAD_PERCENT, 0.25, 20);
@@ -145,38 +146,47 @@ async function handle(update, env) {
       const account = await resetDemoAccount(env, chatId);
       await send(env, chatId, "♻️ Оба виртуальных счёта сброшены до 1 000 USDT.\n\n" + formatDemoAccount(account), {reply_markup:keyboard});
     } catch (e) { await send(env, chatId, "⚠️ Не удалось сбросить демо-счета: " + html(e.message)); }
+  } else if (command === "/stats" || action === "stats") {
+    const account = await getDemoAccount(env, chatId);
+    const a = account.arbi, t = account.trading;
+    const pct = w => w.trades ? (w.wins / w.trades * 100).toFixed(1) + "%" : "пока нет данных";
+    await send(env, chatId, "📊 <b>A|MORE — СТАТИСТИКА ДЕМО</b>\n\n<b>A|MORE Arbitrage</b>\nРасчётных сделок: " + a.trades + "\nМодельный P/L: " + (a.pnl > 0 ? "+" : "") + a.pnl.toFixed(2) + " USDT\n\n<b>A|MORE Signals</b>\nПрогнозов: " + t.trades + "\nУспешных: " + t.wins + " • Неуспешных: " + t.losses + " • Ничьих: " + t.draws + "\nДоля успешных: " + pct(t) + "\nP/L: " + (t.pnl > 0 ? "+" : "") + t.pnl.toFixed(2) + " USDT\n\n<i>Статистика демо-модели. Маленькая выборка не доказывает наличие преимущества.</i>");
   } else if (command === "/trade" || action === "trade") {
     await send(env, chatId, "🔎 Анализирую закрытые минутные свечи BTC, ETH, SOL, BNB и XRP…");
     try {
       const result = await openTradingDemo(env, chatId);
       if (result.active) await send(env, chatId, "У тебя уже есть активный прогноз:\n\n" + formatOpenTrade(result.active));
-      else if (result.none) await send(env, chatId, "⏸ <b>Трейдинг: сигнала нет.</b>\nУсловия стратегии не совпали. Не открываю виртуальную сделку ради количества.");
+      else if (result.none) {
+        const diag = (result.diagnostics || []).map(x => "<b>" + html(x.symbol) + "</b>: EMA " + html(x.ema) + ", RSI " + x.rsi + ", свеча " + html(x.candle) + ", подтверждения " + x.score + "/3").join("\n");
+        const errors = result.errors?.length ? "\n\n⚠️ Ошибки данных:\n" + html(result.errors.join("\n")) : "";
+        await send(env, chatId, "⏸ <b>A|MORE Signals: подходящего сигнала пока нет.</b>\nФильтры не ослаблялись. Диагностика закрытых свечей:\n\n" + (diag || "Недостаточно данных для анализа.") + errors + "\n\n<i>EMA, RSI и направление последней закрытой свечи — фильтры стратегии, а не гарантия движения цены.</i>");
+      }
       else await send(env, chatId, formatOpenTrade(result.trade));
     } catch (e) { await send(env, chatId, "⚠️ Не удалось открыть демо-прогноз: " + html(e.message)); }
   } else if (command === "/arbi_demo" || action === "arbi_demo") {
-    await send(env, chatId, "🔎 Арби проверяет текущие межбиржевые котировки…");
+    await send(env, chatId, "🔎 A|MORE Arbitrage проверяет текущие межбиржевые котировки…");
     try {
       const account = await getDemoAccount(env, chatId);
       const stake = 100;
       if (account.arbi.balance < stake) throw new Error("На демо-балансе Арби недостаточно средств.");
       const data = await scan(env);
       const best = data.opportunities[0];
-      if (!best) await send(env, chatId, "⏸ <b>Арби: возможности нет.</b> Не открываю виртуальную сделку без положительного расчётного net-спреда.");
+      if (!best) await send(env, chatId, "⏸ <b>A|MORE Arbitrage: возможности нет.</b> Не открываю виртуальную сделку без положительного расчётного net-спреда.");
       else {
         const pnl = Number((stake * best.net / 100).toFixed(8));
         const updated = await applyDemoResult(env, chatId, "arbi", pnl, "win");
-        await send(env, chatId, "🟢 <b>АРБИ — ДЕМО-СДЕЛКА ЗАПИСАНА</b>\nПара: <b>" + html(best.symbol) + "</b>\nКупить: " + price(best.buy) + " • " + html(best.buyExchange) + "\nПродать: " + price(best.sell) + " • " + html(best.sellExchange) + "\nВиртуальный объём: " + stake.toFixed(2) + " USDT\nРасчётный net: +" + best.net.toFixed(3) + "%\nМодельный P/L: <b>+" + pnl.toFixed(4) + " USDT</b>\nБаланс Арби: <b>" + updated.arbi.balance.toFixed(2) + " USDT</b>\n\n<i>Это расчёт по лучшим котировкам, не подтверждённое исполнение двух ордеров. Реальные комиссии, глубина и проскальзывание могут изменить результат.</i>");
+        await send(env, chatId, "🟢 <b>A|MORE ARBITRAGE — ДЕМО-СДЕЛКА</b>\nПара: <b>" + html(best.symbol) + "</b>\nКупить: " + price(best.buy) + " • " + html(best.buyExchange) + "\nПродать: " + price(best.sell) + " • " + html(best.sellExchange) + "\nВиртуальный объём: " + stake.toFixed(2) + " USDT\nРасчётный net: +" + best.net.toFixed(3) + "%\nМодельный P/L: <b>+" + pnl.toFixed(4) + " USDT</b>\nБаланс A|MORE Arbitrage: <b>" + updated.arbi.balance.toFixed(2) + " USDT</b>\n\n<i>Это расчёт по лучшим котировкам, не подтверждённое исполнение двух ордеров. Реальные комиссии, глубина и проскальзывание могут изменить результат.</i>");
       }
-    } catch (e) { await send(env, chatId, "⚠️ Демо-скан Арби не завершён: " + html(e.message)); }
+    } catch (e) { await send(env, chatId, "⚠️ Сканирование A|MORE Arbitrage не завершено: " + html(e.message)); }
   } else if (["/start","/help"].includes(command) || action === "help") {
     await send(env, chatId, "⚡ <b>Добро пожаловать в A|MORE ARBITRAGE</b>\nСканер межбиржевых расхождений цен.\n\n" + help(), {reply_markup:keyboard});
   } else if (command === "/scan" || action === "scan") await runScan(env, chatId);
   else if (command === "/subscribe" || action === "subscribe") {
     if (!env.SUBSCRIBERS) await send(env, chatId, "Хранилище подписок пока не подключено. Используй /scan.");
-    else { await env.SUBSCRIBERS.put("chat:" + chatId, "1"); await send(env, chatId, "🔔 Подписка включена.", {reply_markup:keyboard}); }
+    else { await env.SUBSCRIBERS.put("chat:" + chatId, "1"); await send(env, chatId, "🔔 Уведомления A|MORE Arbitrage включены.", {reply_markup:keyboard}); }
   } else if (command === "/unsubscribe" || action === "unsubscribe") {
     if (env.SUBSCRIBERS) await env.SUBSCRIBERS.delete("chat:" + chatId);
-    await send(env, chatId, "🔕 Автоматические сигналы отключены.", {reply_markup:keyboard});
+    await send(env, chatId, "🔕 Уведомления A|MORE Arbitrage отключены.", {reply_markup:keyboard});
   } else await send(env, chatId, "Не понял команду. Отправь /help.", {reply_markup:keyboard});
 }
 async function scheduled(env) {
