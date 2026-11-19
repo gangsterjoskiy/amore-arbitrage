@@ -26,6 +26,38 @@ const EXCHANGES = [
     } }
 ];
 
+const KRAKEN_SYMBOLS = ["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"];
+async function getKrakenMarkets() {
+  const pairResponse = await fetch("https://api.kraken.com/0/public/AssetPairs", {headers:{accept:"application/json"},signal:AbortSignal.timeout(9000)});
+  if (!pairResponse.ok) throw new Error("Kraken AssetPairs HTTP " + pairResponse.status);
+  const pairPayload = await pairResponse.json();
+  if (pairPayload.error?.length) throw new Error("Kraken: " + pairPayload.error.join(", "));
+  const wanted = new Set(KRAKEN_SYMBOLS);
+  const pairs = Object.entries(pairPayload.result || {}).filter(([,info]) => {
+    const normalized = String(info.altname || "").replace("XBT","BTC").replace("/","");
+    return wanted.has(normalized) && info.status !== "cancel_only" && info.status !== "post_only";
+  });
+  if (!pairs.length) throw new Error("Kraken: нет общих USDT-пар");
+  const tickerUrl = "https://api.kraken.com/0/public/Ticker?pair=" + pairs.map(([key]) => encodeURIComponent(key)).join(",");
+  const tickerResponse = await fetch(tickerUrl,{headers:{accept:"application/json"},signal:AbortSignal.timeout(9000)});
+  if (!tickerResponse.ok) throw new Error("Kraken Ticker HTTP " + tickerResponse.status);
+  const tickerPayload = await tickerResponse.json();
+  if (tickerPayload.error?.length) throw new Error("Kraken: " + tickerPayload.error.join(", "));
+  const markets = new Map(), tickers = [];
+  for (const [key,info] of pairs) {
+    const row = tickerPayload.result?.[key];
+    if (!row) continue;
+    const symbol = String(info.altname || "").replace("XBT","BTC").replace("/","");
+    const bid = Number(row.b?.[0]), ask = Number(row.a?.[0]);
+    const bidQty = Number(row.b?.[1]), askQty = Number(row.a?.[1]);
+    const last = Number(row.c?.[0]), open = Number(row.o);
+    if (!wanted.has(symbol) || ![bid,ask,bidQty,askQty,last].every(Number.isFinite) || bid<=0 || ask<=0 || ask<bid) continue;
+    markets.set(symbol,{symbol,bid,ask,bidQty,askQty,last,open});
+    tickers.push({symbol,price:last,change:Number.isFinite(open)&&open>0?(last/open-1)*100:null});
+  }
+  if (!markets.size) throw new Error("Kraken: не удалось получить пригодные USDT-котировки");
+  return {exchange:{id:"Kraken",fee:"KRAKEN_TAKER_FEE"},markets,tickers};
+}
 const setting = (value, fallback, max = 100) => {
   const n = Number(value);
   return Number.isFinite(n) && n >= 0 && n <= max ? n : fallback;
@@ -53,10 +85,13 @@ async function getMarkets(exchange) {
 }
 
 async function scan(env) {
-  const settled = await Promise.allSettled(EXCHANGES.map(getMarkets));
+  const settled = await Promise.allSettled([...EXCHANGES.map(getMarkets), getKrakenMarkets()]);
   const venues = settled.filter(x => x.status === "fulfilled").map(x => x.value);
   const errors = settled.filter(x => x.status === "rejected").map(x => String(x.reason?.message || x.reason));
-  if (venues.length < 2) throw new Error("Доступно меньше двух бирж. " + errors.join("; "));
+  if (venues.length < 2) {
+    const kraken = venues.find(x => x.exchange.id === "Kraken");
+    return {opportunities:[],exchanges:venues.map(x=>x.exchange.id),errors,diagnostics:{sharedPairs:0,depthRejected:0,bestBeforeThreshold:null,minNet:setting(env.MIN_NET_SPREAD_PERCENT,0.25,20),minDepth:setting(env.MIN_TOP_OF_BOOK_DEPTH_USDT,25,1000000)},marketTickers:kraken?.tickers||[],scanAvailable:false};
+  }
   const minNet = setting(env.MIN_NET_SPREAD_PERCENT, 0.25, 20);
   const minDepth = setting(env.MIN_TOP_OF_BOOK_DEPTH_USDT, 25, 1000000);
   const found = [];
@@ -87,7 +122,8 @@ async function scan(env) {
   rawBest.sort((a,b) => b.net-a.net);
   return {
     opportunities: found.slice(0, 8), exchanges: venues.map(x => x.exchange.id), errors,
-    diagnostics: {sharedPairs,depthRejected,bestBeforeThreshold:rawBest[0] || null,minNet,minDepth}
+    diagnostics: {sharedPairs,depthRejected,bestBeforeThreshold:rawBest[0] || null,minNet,minDepth},
+    marketTickers:venues.find(x=>x.exchange.id==="Kraken")?.tickers||[],scanAvailable:true
   };
 }
 
@@ -181,14 +217,14 @@ async function dashboard(env) {
   const wanted = new Set(["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"]);
   const tickers = tickerResult.status === "fulfilled"
     ? tickerResult.value.filter(x => wanted.has(x.symbol)).map(x => ({symbol:x.symbol,price:Number(x.lastPrice),change:Number(x.priceChangePercent)}))
-    : [];
+    : (scanData.marketTickers || []);
   const scanData = scanResult.status === "fulfilled" ? scanResult.value : {
     opportunities: [], exchanges: [], errors: [String(scanResult.reason?.message || scanResult.reason)],
     diagnostics: {sharedPairs:0,depthRejected:0,bestBeforeThreshold:null,minNet:setting(env.MIN_NET_SPREAD_PERCENT,0.25,20),minDepth:minDepthFallback(env)}
   };
   const errors = [...(scanData.errors || [])];
   if (tickerResult.status === "rejected") errors.push(String(tickerResult.reason?.message || tickerResult.reason));
-  return {...scanData,tickers,errors,marketStatus:tickers.length ? "live" : "offline",scanStatus:scanResult.status === "fulfilled" ? "live" : "unavailable"};
+  return {...scanData,tickers,errors,marketStatus:tickers.length ? "live" : "offline",scanStatus:scanResult.status === "fulfilled" && scanData.scanAvailable !== false ? "live" : "unavailable"};
 }
 async function handle(update, env) {
   const msg = update.message, cb = update.callback_query;
