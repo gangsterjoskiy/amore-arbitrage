@@ -342,7 +342,7 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
   }else candidates=candidates.map(candidate=>({...candidate,agreement:1}));
   // Авто выбирает лучший прошедший строгие фильтры таймфрейм; совпадение других ТФ повышает приоритет, но не блокирует прогноз.
   candidates.sort((a,b)=>(b.score+(b.agreement-1)*0.75)-(a.score+(a.agreement-1)*0.75)||b.score-a.score||TIMEFRAMES[b.timeframe].rank-TIMEFRAMES[a.timeframe].rank);
-  const diagnostics=results.filter(x=>x.signal).map(x=>{const d={symbol:x.symbol,timeframe:x.interval,...x.signal.diagnostics};if(requestedTimeframe==="auto"&&x.signal.direction&&rawCandidates.filter(other=>other.symbol===x.symbol&&other.direction===x.signal.direction).length<2)d.rejection="направление не подтверждено минимум двумя таймфреймами";return d;});
+  const diagnostics=results.filter(x=>x.signal).map(x=>({symbol:x.symbol,timeframe:x.interval,...x.signal.diagnostics,agreement:rawCandidates.filter(other=>other.symbol===x.symbol&&other.direction===x.signal.direction).length}));
   const errors=results.filter(x=>x.error).map(x=>x.error),best=candidates[0];
   if(!best)return {none:true,errors,diagnostics,requestedTimeframe};
   const entry=await currentPrice(best.symbol);
