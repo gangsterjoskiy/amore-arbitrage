@@ -182,8 +182,11 @@ async function handle(update, env) {
   }
   const startArg = command === "/start" ? (msg?.text || "").trim().split(/\s+/)[1] : null;
   if (!webAction && startArg?.startsWith("signals_")) {
-    const requested = startArg.slice(8);
-    if (["1m","5m","15m","30m","auto"].includes(requested)) webAction = "trade:" + requested;
+    const parts = startArg.slice(8).split("_");
+    const requested = parts[0];
+    const pair = parts[1] || "ALL";
+    const allowedPairs = ["ALL","BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"];
+    if (["1m","5m","15m","30m","auto"].includes(requested) && allowedPairs.includes(pair)) webAction = "trade:" + requested + ":" + pair;
   }
   const action = cb?.data || webAction;
   if (command === "/demo" || action === "demo") {
@@ -207,11 +210,14 @@ async function handle(update, env) {
   } else if (action === "trade_menu") {
     await send(env, chatId, "📈 <b>A|MORE Signals</b>\nВыбери период свечей. В режиме «Авто» бот проверит все четыре таймфрейма и выберет самый сильный доступный сигнал.", {reply_markup:{inline_keyboard:[[{text:"⚡ M1 · 1 мин",callback_data:"trade:1m"},{text:"🎯 M5 · 5 мин",callback_data:"trade:5m"}],[{text:"🕒 M15 · 15 мин",callback_data:"trade:15m"},{text:"📊 M30 · 30 мин",callback_data:"trade:30m"}],[{text:"🤖 Авто · все периоды",callback_data:"trade:auto"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]}});
   } else if (command === "/trade" || action === "trade" || action?.startsWith("trade:")) {
-    const timeframe = action?.startsWith("trade:") ? action.slice(6) : "auto";
-    const label = timeframe === "auto" ? "все таймфреймы M1/M5/M15/M30" : timeframe + " (" + TIMEFRAMES[timeframe].label + ")";
-    await send(env, chatId, "🔎 Анализирую закрытые свечи BTC, ETH, SOL, BNB и XRP: " + label + "…");
+    const tradeParts = action?.startsWith("trade:") ? action.slice(6).split(":") : ["auto","ALL"];
+    const timeframe = tradeParts[0] || "auto";
+    const pair = tradeParts[1] || "ALL";
+    const pairLabel = pair === "ALL" ? "все пары BTC, ETH, SOL, BNB и XRP" : pair;
+    const label = (timeframe === "auto" ? "все таймфреймы M1/M5/M15/M30" : timeframe + " (" + TIMEFRAMES[timeframe].label + ")") + " • " + pairLabel;
+    await send(env, chatId, "🔎 Анализирую закрытые свечи: " + label + "…");
     try {
-      const result = await openTradingDemo(env, chatId, timeframe);
+      const result = await openTradingDemo(env, chatId, timeframe, pair);
       if (result.active) await send(env, chatId, "У тебя уже есть активный прогноз:\n\n" + formatOpenTrade(result.active));
       else if (result.none) {
         const diag = (result.diagnostics || []).map(x => "<b>" + html(x.symbol) + " · " + html(x.timeframe) + "</b>: EMA " + html(x.ema) + ", RSI " + x.rsi + ", свеча " + html(x.candle) + ", подтверждения " + x.score + "/3").join("\n");
