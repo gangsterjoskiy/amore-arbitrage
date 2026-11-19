@@ -173,5 +173,5 @@ export async function settleTradingDemos(env) {
 }
 export function formatOpenTrade(trade) {
   const tf=trade.timeframe||"1m";
-  return "📈 <b>A|MORE SIGNALS — ДЕМО-ПРОГНОЗ</b>\nПара: <b>"+trade.symbol+"</b>\nТаймфрейм: <b>"+tf+" ("+TIMEFRAMES[tf].label+")</b>\nПрогноз: <b>"+(trade.direction==="UP"?"🟢 ВВЕРХ ↑":"🔴 ВНИЗ ↓")+"</b>\nВиртуальная ставка: <b>"+trade.stake+" USDT</b>\nЦена входа: <b>"+trade.entry+"</b>\nЭкспирация: <b>"+TIMEFRAMES[tf].label+"</b>\nФакторы: "+trade.reasons.join("; ")+"\nОценка модели: "+trade.score+"/3 подтверждений\n\n<i>Экспериментальная стратегия. Точность не подтверждена статистически.</i>";
+  return "📈 <b>A|MORE SIGNALS — ДЕМО-ПРОГНОЗ</b>\nПара: <b>"+trade.symbol+"</b>\nТаймфрейм: <b>"+tf+" ("+TIMEFRAMES[tf].label+")</b>\nПрогноз: <b>"+(trade.direction==="UP"?"🟢 ВВЕРХ ↑":"🔴 ВНИЗ ↓")+"</b>\nВиртуальная ставка: <b>"+trade.stake+" USDT</b>\nЦена входа: <b>"+trade.entry+"</b>\nЭкспирация: <b>"+TIMEFRAMES[tf].label+"</b>\nФакторы: "+trade.reasons.join("; ")+"\nОценка модели: "+trade.score+"/4 подтверждений\n\n<i>Экспериментальная стратегия. Точность не подтверждена статистически.</i>";
 }
