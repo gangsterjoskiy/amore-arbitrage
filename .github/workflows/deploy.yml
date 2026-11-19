@@ -45,7 +45,7 @@ jobs:
           curl -fsS "$WORKER_URL/" -o /tmp/amore-index.html
           grep -q "A|MORE Terminal" /tmp/amore-index.html
           curl -fsS "$WORKER_URL/api/dashboard" -o /tmp/amore-dashboard.json
-          node -e "const x=require('/tmp/amore-dashboard.json'); if(!Array.isArray(x.tickers)||x.tickers.length<1||x.marketStatus!=='live') { console.error(x); process.exit(1) }"
+          node -e "const x=require('/tmp/amore-dashboard.json'); console.log(JSON.stringify({marketStatus:x.marketStatus,scanStatus:x.scanStatus,exchanges:x.exchanges,tickers:x.tickers,errors:x.errors},null,2)); if(!Array.isArray(x.tickers)||x.tickers.length<1||x.marketStatus!=='live'||x.scanStatus!=='live'||!Array.isArray(x.exchanges)||x.exchanges.length<2) process.exit(1)"
           curl -fsS "$WORKER_URL/api/candles?symbol=BTCUSDT&interval=1m" -o /tmp/amore-candles.json
           node -e "const x=require('/tmp/amore-candles.json'); if(!Array.isArray(x)||x.length<30) process.exit(1)"
         env:
