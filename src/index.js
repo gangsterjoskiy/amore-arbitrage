@@ -399,7 +399,12 @@ export default {
         const timeframe = body.timeframe || "auto";
         const pair = body.pair || "ALL";
         const result = await openTradingDemo(env, chatId, timeframe, pair, body.assetType || "forex", body.mode === "atm" ? "atm" : "strict");
-        if (result.trade) await send(env, chatId, formatOpenTrade(result.trade));
+        if (result.trade) {
+          // Telegram notification is best-effort: a notification failure must not turn
+          // a successfully created demo signal into an API error for the Mini App.
+          try { await send(env, chatId, formatOpenTrade(result.trade)); }
+          catch (notifyError) { console.error("Mini App signal notification failed:", notifyError); }
+        }
         return Response.json(result,{headers:{"cache-control":"no-store"}});
       } catch(e) { return Response.json({error:e.message},{status:400,headers:{"cache-control":"no-store"}}); }
     }
