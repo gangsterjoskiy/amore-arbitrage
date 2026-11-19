@@ -118,18 +118,24 @@ async function getMarkets(exchange) {
 
 async function getKucoinMarkets() {
   const symbols=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"];
-  const rows=await Promise.all(symbols.map(async symbol=>{
+  const results=await Promise.allSettled(symbols.map(async symbol=>{
     const pair=symbol.replace("USDT","-USDT");
     const response=await fetch("https://api.kucoin.com/api/v1/market/orderbook/level1?symbol="+pair,{headers:{accept:"application/json"},signal:AbortSignal.timeout(9000)});
     if(!response.ok)throw new Error("KuCoin "+symbol+" HTTP "+response.status);
     const payload=await response.json(),x=payload.data;
     if(payload.code!=="200000"||!x)throw new Error("KuCoin: нет данных "+symbol);
-    return {symbol,bid:Number(x.bestBid),ask:Number(x.bestAsk),bidQty:Number(x.bestBidSize),askQty:Number(x.bestAskSize)};
+    const market={symbol,bid:Number(x.bestBid),ask:Number(x.bestAsk),bidQty:Number(x.bestBidSize),askQty:Number(x.bestAskSize)};
+    if(![market.bid,market.ask,market.bidQty,market.askQty].every(Number.isFinite)||market.bid<=0||market.ask<market.bid||market.bidQty<=0||market.askQty<=0)throw new Error("KuCoin: некорректный стакан "+symbol);
+    return market;
   }));
-  const markets=new Map();
-  for(const x of rows)if([x.bid,x.ask,x.bidQty,x.askQty].every(Number.isFinite)&&x.bid>0&&x.ask>=x.bid)markets.set(x.symbol,x);
-  if(!markets.size)throw new Error("KuCoin: нет пригодных USDT-котировок");
-  return {exchange:{id:"KuCoin",fee:"KUCOIN_TAKER_FEE"},markets};
+  const markets=new Map(),errors=[];
+  for(let i=0;i<results.length;i++){
+    const result=results[i];
+    if(result.status==="fulfilled")markets.set(symbols[i],result.value);
+    else errors.push(String(result.reason?.message||result.reason));
+  }
+  if(!markets.size)throw new Error(errors.join("; ")||"KuCoin: нет пригодных USDT-котировок");
+  return {exchange:{id:"KuCoin",fee:"KUCOIN_TAKER_FEE"},markets,errors};
 }
 function marketTickerSnapshot(venues) {
   return KRAKEN_SYMBOLS.map(symbol => {
