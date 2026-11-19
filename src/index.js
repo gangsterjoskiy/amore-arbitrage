@@ -3,11 +3,6 @@ import { openTradingDemo, settleTradingDemos, formatOpenTrade, TIMEFRAMES } from
 
 
 const EXCHANGES = [
-  { id: "Binance", url: "https://api.binance.com/api/v3/ticker/bookTicker", fee: "BINANCE_TAKER_FEE",
-    parse: (p) => p.filter(x => x.symbol && x.symbol.endsWith("USDT")).map(x => ({
-      symbol: x.symbol, bid: Number(x.bidPrice), ask: Number(x.askPrice),
-      bidQty: Number(x.bidQty), askQty: Number(x.askQty)
-    })) },
   { id: "Bybit", url: "https://api.bybit.com/v5/market/tickers?category=spot", fee: "BYBIT_TAKER_FEE",
     parse: (p) => {
       if (p.retCode !== 0 || !Array.isArray(p.result?.list)) throw new Error(p.retMsg || "Bybit response error");
@@ -116,27 +111,6 @@ async function getMarkets(exchange) {
   return { exchange, markets };
 }
 
-async function getKucoinMarkets() {
-  const symbols=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"];
-  const results=await Promise.allSettled(symbols.map(async symbol=>{
-    const pair=symbol.replace("USDT","-USDT");
-    const response=await fetch("https://api.kucoin.com/api/v1/market/orderbook/level1?symbol="+pair,{headers:{accept:"application/json"},signal:AbortSignal.timeout(9000)});
-    if(!response.ok)throw new Error("KuCoin "+symbol+" HTTP "+response.status);
-    const payload=await response.json(),x=payload.data;
-    if(payload.code!=="200000"||!x)throw new Error("KuCoin: нет данных "+symbol);
-    const market={symbol,bid:Number(x.bestBid),ask:Number(x.bestAsk),bidQty:Number(x.bestBidSize),askQty:Number(x.bestAskSize)};
-    if(![market.bid,market.ask,market.bidQty,market.askQty].every(Number.isFinite)||market.bid<=0||market.ask<market.bid||market.bidQty<=0||market.askQty<=0)throw new Error("KuCoin: некорректный стакан "+symbol);
-    return market;
-  }));
-  const markets=new Map(),errors=[];
-  for(let i=0;i<results.length;i++){
-    const result=results[i];
-    if(result.status==="fulfilled")markets.set(symbols[i],result.value);
-    else errors.push(String(result.reason?.message||result.reason));
-  }
-  if(!markets.size)throw new Error(errors.join("; ")||"KuCoin: нет пригодных USDT-котировок");
-  return {exchange:{id:"KuCoin",fee:"KUCOIN_TAKER_FEE"},markets,errors};
-}
 function marketTickerSnapshot(venues) {
   return KRAKEN_SYMBOLS.map(symbol => {
     const venue = venues.find(x => x.exchange.id === "Kraken" && x.markets.has(symbol)) || venues.find(x => x.markets.has(symbol));
@@ -148,7 +122,7 @@ function marketTickerSnapshot(venues) {
   }).filter(x => x && Number.isFinite(x.price) && x.price > 0);
 }
 async function scan(env) {
-  const settled = await Promise.allSettled([...EXCHANGES.map(getMarkets), getKrakenMarkets(), getGateMarkets(), getKucoinMarkets()]);
+  const settled = await Promise.allSettled([...EXCHANGES.map(getMarkets), getKrakenMarkets(), getGateMarkets()]);
   const venues = settled.filter(x => x.status === "fulfilled").map(x => x.value);
   const errors = settled.flatMap(x => x.status === "rejected" ? [String(x.reason?.message || x.reason)] : (x.value.errors || []));
   if (venues.length < 2) {
@@ -270,24 +244,13 @@ async function telegramMiniAppUser(request, env) {
   return Number(user.id);
 }
 async function dashboard(env) {
-  const [scanResult, tickerResult] = await Promise.allSettled([
-    scan(env),
-    fetch("https://api.binance.com/api/v3/ticker/24hr", { signal: AbortSignal.timeout(9000) }).then(async response => {
-      if (!response.ok) throw new Error("Binance 24h HTTP " + response.status);
-      return response.json();
-    })
-  ]);
-  const wanted = new Set(["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"]);
-  const scanData = scanResult.status === "fulfilled" ? scanResult.value : {
-    opportunities: [], exchanges: [], errors: [String(scanResult.reason?.message || scanResult.reason)],
-    diagnostics: {sharedPairs:0,depthRejected:0,bestBeforeThreshold:null,minNet:setting(env.MIN_NET_SPREAD_PERCENT,0.25,20),minDepth:minDepthFallback(env)},marketTickers:[]
+  const scanResult = await Promise.allSettled([scan(env)]);
+  const scanData = scanResult[0].status === "fulfilled" ? scanResult[0].value : {
+    opportunities: [], exchanges: [], errors: [String(scanResult[0].reason?.message || scanResult[0].reason)],
+    diagnostics: {sharedPairs:0,depthRejected:0,bestBeforeThreshold:null,minNet:setting(env.MIN_NET_SPREAD_PERCENT,0.25,20),minDepth:minDepthFallback(env)},marketTickers:[],scanAvailable:false
   };
-  const tickers = tickerResult.status === "fulfilled"
-    ? tickerResult.value.filter(x => wanted.has(x.symbol)).map(x => ({symbol:x.symbol,price:Number(x.lastPrice),change:Number(x.priceChangePercent),source:"Binance"}))
-    : (scanData.marketTickers || []);
-  const errors = [...(scanData.errors || [])];
-  if (tickerResult.status === "rejected") errors.push(String(tickerResult.reason?.message || tickerResult.reason));
-  return {...scanData,tickers,errors,marketStatus:tickers.length ? "live" : "offline",scanStatus:scanResult.status === "fulfilled" && scanData.scanAvailable !== false ? "live" : "unavailable"};
+  const tickers = scanData.marketTickers || [];
+  return {...scanData,tickers,errors:scanData.errors||[],marketStatus:tickers.length ? "live" : "offline",scanStatus:scanData.scanAvailable === false ? "unavailable" : "live"};
 }
 async function handle(update, env) {
   const msg = update.message, cb = update.callback_query;
