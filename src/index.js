@@ -130,7 +130,20 @@ async function handle(update, env) {
   if (cb) await tg(env, "answerCallbackQuery", {callback_query_id:cb.id});
   const command = (msg?.text || "").trim().split(/\s+/)[0].toLowerCase();
   const action = cb?.data;
-  if (command === "/demo" || action === "demo") {\n    try {\n      const account = await getDemoAccount(env, chatId);\n      await send(env, chatId, formatDemoAccount(account), {reply_markup:{inline_keyboard:[[{text:"♻️ Сбросить оба баланса",callback_data:"demo_reset"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]}});\n    } catch (e) { await send(env, chatId, "⚠️ Демо-счёт недоступен: " + html(e.message)); }\n  } else if (command === "/demo_reset" || action === "demo_reset") {\n    try {\n      const account = await resetDemoAccount(env, chatId);\n      await send(env, chatId, "♻️ Оба виртуальных счёта сброшены до 1 000 USDT.\\n\\n" + formatDemoAccount(account), {reply_markup:keyboard});\n    } catch (e) { await send(env, chatId, "⚠️ Не удалось сбросить демо-счета: " + html(e.message)); }\n  } else if (["/start","/help"].includes(command) || action === "help") {
+  if (command === "/demo" || action === "demo") {
+    try {
+      const account = await getDemoAccount(env, chatId);
+      await send(env, chatId, formatDemoAccount(account), {reply_markup:{inline_keyboard:[
+        [{text:"♻️ Сбросить оба баланса",callback_data:"demo_reset"}],
+        [{text:"⬅️ Главное меню",callback_data:"help"}]
+      ]}});
+    } catch (e) { await send(env, chatId, "⚠️ Демо-счёт недоступен: " + html(e.message)); }
+  } else if (command === "/demo_reset" || action === "demo_reset") {
+    try {
+      const account = await resetDemoAccount(env, chatId);
+      await send(env, chatId, "♻️ Оба виртуальных счёта сброшены до 1 000 USDT.\n\n" + formatDemoAccount(account), {reply_markup:keyboard});
+    } catch (e) { await send(env, chatId, "⚠️ Не удалось сбросить демо-счета: " + html(e.message)); }
+  } else if (["/start","/help"].includes(command) || action === "help") {
     await send(env, chatId, "⚡ <b>Добро пожаловать в A|MORE ARBITRAGE</b>\nСканер межбиржевых расхождений цен.\n\n" + help(), {reply_markup:keyboard});
   } else if (command === "/scan" || action === "scan") await runScan(env, chatId);
   else if (command === "/subscribe" || action === "subscribe") {
