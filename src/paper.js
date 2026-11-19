@@ -234,7 +234,7 @@ function averageTrueRange(rows,period=14){
   for(let i=1;i<rows.length;i++){const p=rows[i-1],c=rows[i];ranges.push(Math.max(c.high-c.low,Math.abs(c.high-p.close),Math.abs(c.low-p.close)));}
   return mean(ranges.slice(-period));
 }
-function analyze(rows) {
+function analyze(rows,mode="strict") {
   const closes=rows.map(x=>x.close),last=rows[rows.length-1],prev=rows[rows.length-2];
   const fast=ema(closes.slice(-35),9),slow=ema(closes.slice(-50),21);
   const fastPrior=ema(closes.slice(-38,-3),9),momentum=rsi(closes,14);
@@ -262,15 +262,29 @@ function analyze(rows) {
   const volatilitySpike=atr>0&&shape.range>atr*2.5;
   let direction=up>down?"UP":down>up?"DOWN":null,score=Math.max(up,down);
   let rejection="";
-  if(strength.adx<18)rejection="слабый тренд / боковой рынок (ADX ниже 18)";
-  else if(direction&&Math.abs(up-down)<2)rejection="противоречивые факторы: нет перевеса минимум в 2 подтверждения";
-  else if(volatilitySpike)rejection="аномально большая последняя свеча — риск разворота";
-  else if(direction==="UP"&&nearResistance)rejection="цена слишком близко к сопротивлению";
-  else if(direction==="DOWN"&&nearSupport)rejection="цена слишком близко к поддержке";
-  else if(direction==="UP"&&!(trendUp&&macdUp&&strengthUp&&bullishCandle))rejection="нет обязательного подтверждения для ВВЕРХ";
-  else if(direction==="DOWN"&&!(trendDown&&macdDown&&strengthDown&&bearishCandle))rejection="нет обязательного подтверждения для ВНИЗ";
-  else if(score<5)rejection="недостаточно независимых подтверждений (нужно минимум 5 из 6)";
-  if(rejection)direction=null;
+  if(mode==="atm"){
+    // Fast snapshot: use the strongest available directional evidence, without strict-entry gates.
+    if(!direction){
+      if(fast!==slow)direction=fast>slow?"UP":"DOWN";
+      else if(macd.histogram!==0)direction=macd.histogram>0?"UP":"DOWN";
+      else if(momentum!==50)direction=momentum>50?"UP":"DOWN";
+      else direction=last.close>=prev.close?"UP":"DOWN";
+    }
+    rejection=volatilitySpike?"Повышенный риск: последняя свеча аномально большая":
+      strength.adx<18?"Слабый тренд: направление предварительное":
+      score<4?"Мало совпадающих факторов: прогноз низкой уверенности":
+      "Быстрый прогноз по текущей картине; строгие фильтры не применялись";
+  }else{
+    if(strength.adx<18)rejection="слабый тренд / боковой рынок (ADX ниже 18)";
+    else if(direction&&Math.abs(up-down)<2)rejection="противоречивые факторы: нет перевеса минимум в 2 подтверждения";
+    else if(volatilitySpike)rejection="аномально большая последняя свеча — риск разворота";
+    else if(direction==="UP"&&nearResistance)rejection="цена слишком близко к сопротивлению";
+    else if(direction==="DOWN"&&nearSupport)rejection="цена слишком близко к поддержке";
+    else if(direction==="UP"&&!(trendUp&&macdUp&&strengthUp&&bullishCandle))rejection="нет обязательного подтверждения для ВВЕРХ";
+    else if(direction==="DOWN"&&!(trendDown&&macdDown&&strengthDown&&bearishCandle))rejection="нет обязательного подтверждения для ВНИЗ";
+    else if(score<5)rejection="недостаточно независимых подтверждений (нужно минимум 5 из 6)";
+    if(rejection)direction=null;
+  }
   const trend=fast>slow?"восходящий":fast<slow?"нисходящий":"боковой";
   const activePatterns=up>down?patterns.bull:down>up?patterns.bear:[];
   const patternText=activePatterns.length?activePatterns.join(", "):patterns.neutral.length?patterns.neutral.join(", "):"чёткого паттерна нет";
@@ -278,19 +292,20 @@ function analyze(rows) {
     macd:macd.histogram>0?"положительная":"отрицательная",
     structure:structureUp?"повышающиеся максимумы и минимумы":structureDown?"понижающиеся максимумы и минимумы":"не подтверждена",
     candle:bullishCandle?"сильная бычья":bearishCandle?"сильная медвежья":"слабая / нейтральная",
-    explanation:direction==="UP"?"EMA-тренд, MACD, ADX/DI, RSI, импульс свечи и структура рынка подтверждают рост":
+    explanation:mode==="atm"?(direction==="UP"?"ATM: быстрый уклон ВВЕРХ по доступным факторам":"ATM: быстрый уклон ВНИЗ по доступным факторам"):
+      direction==="UP"?"EMA-тренд, MACD, ADX/DI, RSI, импульс свечи и структура рынка подтверждают рост":
       direction==="DOWN"?"EMA-тренд, MACD, ADX/DI, RSI, импульс свечи и структура рынка подтверждают снижение":
       "Сигнал отфильтрован: "+(rejection||"направление не подтверждено")};
   return {direction,score,reasons:direction?[analysis.explanation]:[],entry:last.close,candleCloseTime:last.closeTime,atr,analysis,
     diagnostics:{ema:trend,rsi:analysis.rsi,candle:analysis.candle,patterns,adx:analysis.adx,score,direction:direction||"нет",rejection:rejection||"нет единого направления"}};
 }
-export async function openTradingDemo(env,chatId,requestedTimeframe="auto",requestedPair="ALL",requestedAssetType="forex") {
+export async function openTradingDemo(env,chatId,requestedTimeframe="auto",requestedPair="ALL",requestedAssetType="forex",requestedMode="strict") {
   if(!env.SUBSCRIBERS)throw new Error("KV namespace SUBSCRIBERS is not configured");
   if(await env.SUBSCRIBERS.get("user:stop:"+chatId))throw new Error("A|MORE STOP включён. Возобнови работу кнопкой в Telegram-боте.");
   // Каждый запрос создаёт отдельный прогноз. Уже открытые прогнозы не блокируют новые.
   const account=await getDemoAccount(env,chatId);
   if(account.trading.balance<TRADE_STAKE)throw new Error("На демо-балансе A|MORE Signals недостаточно средств.");
-  const intervals=requestedTimeframe==="auto"?Object.keys(TIMEFRAMES):[requestedTimeframe];
+  const intervals=requestedMode==="atm"?(requestedTimeframe==="auto"?["1m"]:[requestedTimeframe]):requestedTimeframe==="auto"?Object.keys(TIMEFRAMES):[requestedTimeframe];
   if(!TIMEFRAMES[requestedTimeframe]&&requestedTimeframe!=="auto")throw new Error("Неизвестный таймфрейм.");
   if(requestedPair!=="ALL"&&!PAIRS.includes(requestedPair)&&!STOCKS.includes(requestedPair))throw new Error("Неизвестный актив.");
   const selectedPairs=requestedPair==="ALL"?(requestedAssetType==="crypto"?CRYPTO_PAIRS:requestedAssetType==="stocks"?STOCKS:FOREX_PAIRS):[requestedPair];
@@ -310,7 +325,7 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
       }else rows=await candles(task.symbol,task.interval);
       rows=rows.filter(c=>c.closeTime<Date.now()-1000);
       if(rows.length<30)throw new Error("недостаточно закрытых свечей после фильтрации незавершённой свечи");
-      const signal=analyze(rows);
+      const signal=analyze(rows,requestedMode);
       if(signal.candleCloseTime){
         const intervalMs=TIMEFRAMES[task.interval].expiryMs;
         const age=Date.now()-signal.candleCloseTime;
@@ -323,7 +338,7 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
   await Promise.all(Array.from({length:Math.min(5,tasks.length)},()=>worker()));
   const rawCandidates=results.filter(x=>x.signal?.direction).map(x=>({symbol:x.symbol,timeframe:x.interval,...x.signal}));
   let candidates=rawCandidates;
-  if(requestedTimeframe==="auto"){
+  if(requestedTimeframe==="auto"&&requestedMode!=="atm"){
     candidates=rawCandidates.map(candidate=>({...candidate,agreement:rawCandidates.filter(other=>other.symbol===candidate.symbol&&other.direction===candidate.direction).length})).filter(candidate=>candidate.agreement>=2);
   }else candidates=candidates.map(candidate=>({...candidate,agreement:1}));
   candidates.sort((a,b)=>b.score-a.score||b.agreement-a.agreement||TIMEFRAMES[b.timeframe].rank-TIMEFRAMES[a.timeframe].rank);
@@ -333,7 +348,7 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
   const entry=await currentPrice(best.symbol);
   const now=Date.now(),duration=TIMEFRAMES[best.timeframe].expiryMs;
   const id=String(chatId)+":"+now+":"+crypto.randomUUID();
-  const trade={id,symbol:best.symbol,timeframe:best.timeframe,direction:best.direction,entry,stake:TRADE_STAKE,payout:PAYOUT,openedAt:now,entryAt:now,entryTimeMsk:mskTime(now),settleAt:now+duration,expiryMs:duration,reasons:best.reasons,score:best.score,timeframeAgreement:best.agreement,analysis:best.analysis,signalCandleCloseTime:best.candleCloseTime,assetType:STOCKS.includes(best.symbol)?"stock":FOREX_PAIRS.includes(best.symbol)?"forex":"crypto",marketSource:STOCKS.includes(best.symbol)?"Yahoo Finance · обычный биржевой рынок":FOREX_PAIRS.includes(best.symbol)?"Yahoo Finance · Forex spot (не поток Pocket Option)":"агрегированные спотовые котировки"};
+  const trade={id,symbol:best.symbol,timeframe:best.timeframe,mode:requestedMode,direction:best.direction,entry,stake:TRADE_STAKE,payout:PAYOUT,openedAt:now,entryAt:now,entryTimeMsk:mskTime(now),settleAt:now+duration,expiryMs:duration,reasons:best.reasons,score:best.score,timeframeAgreement:best.agreement,analysis:best.analysis,signalCandleCloseTime:best.candleCloseTime,assetType:STOCKS.includes(best.symbol)?"stock":FOREX_PAIRS.includes(best.symbol)?"forex":"crypto",marketSource:STOCKS.includes(best.symbol)?"Yahoo Finance · обычный биржевой рынок":FOREX_PAIRS.includes(best.symbol)?"Yahoo Finance · Forex spot (не поток Pocket Option)":"агрегированные спотовые котировки"};
   const tradeKey="paper:trading:"+chatId+":"+now+":"+crypto.randomUUID();
   await env.SUBSCRIBERS.put(tradeKey,JSON.stringify(trade),{expirationTtl:Math.ceil(duration/1000)+300});
   return {trade};
