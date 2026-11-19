@@ -220,9 +220,14 @@ function directionalStrength(rows,period=14){
     const up=c.high-p.high,down=p.low-c.low;
     plus.push(up>down&&up>0?up:0);minus.push(down>up&&down>0?down:0);
   }
-  const t=mean(tr.slice(-period)),p=mean(plus.slice(-period)),m=mean(minus.slice(-period));
-  const pdi=t?p/t*100:0,mdi=t?m/t*100:0;
-  return {adx:pdi+mdi?Math.abs(pdi-mdi)/(pdi+mdi)*100:0,pdi,mdi};
+  const dx=[];
+  for(let i=period-1;i<tr.length;i++){
+    const t=mean(tr.slice(i-period+1,i+1)),p=mean(plus.slice(i-period+1,i+1)),m=mean(minus.slice(i-period+1,i+1));
+    const pdi=t?p/t*100:0,mdi=t?m/t*100:0;
+    dx.push({value:pdi+mdi?Math.abs(pdi-mdi)/(pdi+mdi)*100:0,pdi,mdi});
+  }
+  const latest=dx[dx.length-1]||{value:0,pdi:0,mdi:0};
+  return {adx:mean(dx.slice(-period).map(x=>x.value)),pdi:latest.pdi,mdi:latest.mdi};
 }
 function averageTrueRange(rows,period=14){
   const ranges=[];
