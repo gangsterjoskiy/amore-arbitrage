@@ -1,0 +1,1 @@
+name = "amore-arbitrage"\nmain = "src/index.js"\ncompatibility_date = "2026-11-19"\n\n[triggers]\ncrons = ["* * * * *"]\n\n[[kv_namespaces]]\nbinding = "SUBSCRIBERS"\nid = "REPLACE_WITH_KV_NAMESPACE_ID"\n
