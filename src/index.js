@@ -189,7 +189,14 @@ async function handle(update, env) {
     if (["1m","5m","15m","30m","auto"].includes(requested) && allowedPairs.includes(pair)) webAction = "trade:" + requested + ":" + pair;
   }
   const action = cb?.data || webAction;
-  if (command === "/demo" || action === "demo") {
+  if (command === "/stop" || startArg === "stop" || action === "stop") {
+    await env.SUBSCRIBERS.put("user:stop:" + chatId, "1");
+    await env.SUBSCRIBERS.delete("chat:" + chatId);
+    await send(env, chatId, "🛑 <b>A|MORE STOP включён.</b> Новые демо-прогнозы и автоматические уведомления для этого аккаунта приостановлены. Уже открытый виртуальный прогноз будет рассчитан по экспирации.", {reply_markup:{inline_keyboard:[[{text:"▶️ Возобновить работу",callback_data:"resume"}],[{text:"💼 Демо-счёт",callback_data:"demo"}]]}});
+  } else if (command === "/resume" || startArg === "resume" || action === "resume") {
+    await env.SUBSCRIBERS.delete("user:stop:" + chatId);
+    await send(env, chatId, "▶️ <b>A|MORE возобновлён.</b> Новые демо-прогнозы снова доступны. Уведомления можно включить отдельно.", {reply_markup:keyboard});
+  } else if (command === "/demo" || action === "demo") {
     try {
       const account = await getDemoAccount(env, chatId);
       await send(env, chatId, formatDemoAccount(account), {reply_markup:{inline_keyboard:[
