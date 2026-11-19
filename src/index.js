@@ -1,4 +1,4 @@
-import { getDemoAccount, resetDemoAccount, formatDemoAccount, applyDemoResult } from "./demo.js";
+import { getDemoAccount, getDemoHistory, resetDemoAccount, formatDemoAccount, applyDemoResult } from "./demo.js";
 import { openTradingDemo, settleTradingDemos, formatOpenTrade, TIMEFRAMES } from "./paper.js";
 
 
@@ -331,7 +331,7 @@ async function handle(update, env) {
       if (!best) await send(env, chatId, "⏸ <b>A|MORE Arbitrage: возможности нет.</b> Не открываю виртуальную сделку без положительного расчётного net-спреда.");
       else {
         const pnl = Number((stake * best.net / 100).toFixed(8));
-        const updated = await applyDemoResult(env, chatId, "arbi", pnl, "win");
+        const updated = await applyDemoResult(env, chatId, "arbi", pnl, "win", {type:"arbitrage",symbol:best.symbol,buyExchange:best.buyExchange,sellExchange:best.sellExchange,buy:best.buy,sell:best.sell,net:best.net,stake});
         await send(env, chatId, "🟢 <b>A|MORE ARBITRAGE — ДЕМО-СДЕЛКА</b>\nПара: <b>" + html(best.symbol) + "</b>\nКупить: " + price(best.buy) + " • " + html(best.buyExchange) + "\nПродать: " + price(best.sell) + " • " + html(best.sellExchange) + "\nВиртуальный объём: " + stake.toFixed(2) + " USDT\nРасчётный net: +" + best.net.toFixed(3) + "%\nМодельный P/L: <b>+" + pnl.toFixed(4) + " USDT</b>\nБаланс A|MORE Arbitrage: <b>" + updated.arbi.balance.toFixed(2) + " USDT</b>\n\n<i>Это расчёт по лучшим котировкам, не подтверждённое исполнение двух ордеров. Реальные комиссии, глубина и проскальзывание могут изменить результат.</i>");
       }
     } catch (e) { await send(env, chatId, "⚠️ Сканирование A|MORE Arbitrage не завершено: " + html(e.message)); }
@@ -374,7 +374,8 @@ export default {
         const chatId = await telegramMiniAppUser(request, env);
         const account = await getDemoAccount(env, chatId);
         const rawTrade = await env.SUBSCRIBERS.get("paper:trading:" + chatId);
-        return Response.json({account,activeTrade:rawTrade ? JSON.parse(rawTrade) : null,stopped:!!(await env.SUBSCRIBERS.get("user:stop:" + chatId))},{headers:{"cache-control":"no-store"}});
+        const history = await getDemoHistory(env, chatId);
+        return Response.json({account,history,activeTrade:rawTrade ? JSON.parse(rawTrade) : null,stopped:!!(await env.SUBSCRIBERS.get("user:stop:" + chatId))},{headers:{"cache-control":"no-store"}});
       } catch(e) { return Response.json({error:e.message},{status:401,headers:{"cache-control":"no-store"}}); }
     }
     if (url.pathname === "/api/signal" && request.method === "POST") {
