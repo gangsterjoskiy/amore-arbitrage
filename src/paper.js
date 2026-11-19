@@ -250,7 +250,7 @@ function analyze(rows,mode="strict") {
   const trendUp=fast>slow&&fast>fastPrior,trendDown=fast<slow&&fast<fastPrior;
   const momentumUp=momentum>=51&&momentum<=67,momentumDown=momentum<=49&&momentum>=33;
   const macdUp=macd.histogram>0&&macd.histogram>=macd.previous,macdDown=macd.histogram<0&&macd.histogram<=macd.previous;
-  const strengthUp=strength.adx>=18&&strength.pdi>strength.mdi,strengthDown=strength.adx>=18&&strength.mdi>strength.pdi;
+  const strengthUp=strength.adx>=14&&strength.pdi>strength.mdi,strengthDown=strength.adx>=14&&strength.mdi>strength.pdi;
   const structureUp=higherHigh&&higherLow,structureDown=lowerHigh&&lowerLow;
   const up=[trendUp,momentumUp,macdUp,strengthUp,bullishCandle,structureUp].filter(Boolean).length;
   const down=[trendDown,momentumDown,macdDown,strengthDown,bearishCandle,structureDown].filter(Boolean).length;
@@ -275,26 +275,25 @@ function analyze(rows,mode="strict") {
       score<4?"Мало совпадающих факторов: прогноз низкой уверенности":
       "Быстрый прогноз по текущей картине; строгие фильтры не применялись";
   }else{
-    if(strength.adx<18)rejection="слабый тренд / боковой рынок (ADX ниже 18)";
-    else if(direction&&Math.abs(up-down)<2)rejection="противоречивые факторы: нет перевеса минимум в 2 подтверждения";
+    if(strength.adx<14)rejection="слишком слабое движение рынка (ADX ниже 14)";
+    else if(!direction)rejection="факторы не дают явного перевеса в одну сторону";
     else if(volatilitySpike)rejection="аномально большая последняя свеча — риск разворота";
     else if(direction==="UP"&&nearResistance)rejection="цена слишком близко к сопротивлению";
     else if(direction==="DOWN"&&nearSupport)rejection="цена слишком близко к поддержке";
-    else if(direction==="UP"&&!(trendUp&&macdUp&&strengthUp&&bullishCandle))rejection="нет обязательного подтверждения для ВВЕРХ";
-    else if(direction==="DOWN"&&!(trendDown&&macdDown&&strengthDown&&bearishCandle))rejection="нет обязательного подтверждения для ВНИЗ";
-    else if(score<5)rejection="недостаточно независимых подтверждений (нужно минимум 5 из 6)";
+    else if(score<3)rejection="недостаточно подтверждений (нужно минимум 3 из 6)";
     if(rejection)direction=null;
   }
+  const confidence=score>=5?"Высокая":score>=4?"Средняя":"Низкая";
   const trend=fast>slow?"восходящий":fast<slow?"нисходящий":"боковой";
   const activePatterns=up>down?patterns.bull:down>up?patterns.bear:[];
   const patternText=activePatterns.length?activePatterns.join(", "):patterns.neutral.length?patterns.neutral.join(", "):"чёткого паттерна нет";
-  const analysis={trend,rsi:Number(momentum.toFixed(1)),pattern:patternText,support,resistance,adx:Number(strength.adx.toFixed(1)),atr,
+  const analysis={trend,rsi:Number(momentum.toFixed(1)),pattern:patternText,support,resistance,adx:Number(strength.adx.toFixed(1)),atr,confidence,
     macd:macd.histogram>0?"положительная":"отрицательная",
     structure:structureUp?"повышающиеся максимумы и минимумы":structureDown?"понижающиеся максимумы и минимумы":"не подтверждена",
     candle:bullishCandle?"сильная бычья":bearishCandle?"сильная медвежья":"слабая / нейтральная",
     explanation:mode==="atm"?(direction==="UP"?"ATM: быстрый уклон ВВЕРХ по доступным факторам":"ATM: быстрый уклон ВНИЗ по доступным факторам"):
-      direction==="UP"?"EMA-тренд, MACD, ADX/DI, RSI, импульс свечи и структура рынка подтверждают рост":
-      direction==="DOWN"?"EMA-тренд, MACD, ADX/DI, RSI, импульс свечи и структура рынка подтверждают снижение":
+      direction==="UP"?"Уклон ВВЕРХ: "+score+" из 6 факторов поддерживают направление":
+      direction==="DOWN"?"Уклон ВНИЗ: "+score+" из 6 факторов поддерживают направление":
       "Сигнал отфильтрован: "+(rejection||"направление не подтверждено")};
   return {direction,score,reasons:direction?[analysis.explanation]:[],entry:last.close,candleCloseTime:last.closeTime,atr,analysis,
     diagnostics:{ema:trend,rsi:analysis.rsi,candle:analysis.candle,patterns,adx:analysis.adx,score,direction:direction||"нет",rejection:rejection||"нет единого направления"}};
@@ -339,9 +338,10 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
   const rawCandidates=results.filter(x=>x.signal?.direction).map(x=>({symbol:x.symbol,timeframe:x.interval,...x.signal}));
   let candidates=rawCandidates;
   if(requestedTimeframe==="auto"&&requestedMode!=="atm"){
-    candidates=rawCandidates.map(candidate=>({...candidate,agreement:rawCandidates.filter(other=>other.symbol===candidate.symbol&&other.direction===candidate.direction).length})).filter(candidate=>candidate.agreement>=2);
+    candidates=rawCandidates.map(candidate=>({...candidate,agreement:rawCandidates.filter(other=>other.symbol===candidate.symbol&&other.direction===candidate.direction).length}));
   }else candidates=candidates.map(candidate=>({...candidate,agreement:1}));
-  candidates.sort((a,b)=>b.score-a.score||b.agreement-a.agreement||TIMEFRAMES[b.timeframe].rank-TIMEFRAMES[a.timeframe].rank);
+  // Авто выбирает лучший прошедший строгие фильтры таймфрейм; совпадение других ТФ повышает приоритет, но не блокирует прогноз.
+  candidates.sort((a,b)=>(b.score+(b.agreement-1)*0.75)-(a.score+(a.agreement-1)*0.75)||b.score-a.score||TIMEFRAMES[b.timeframe].rank-TIMEFRAMES[a.timeframe].rank);
   const diagnostics=results.filter(x=>x.signal).map(x=>{const d={symbol:x.symbol,timeframe:x.interval,...x.signal.diagnostics};if(requestedTimeframe==="auto"&&x.signal.direction&&rawCandidates.filter(other=>other.symbol===x.symbol&&other.direction===x.signal.direction).length<2)d.rejection="направление не подтверждено минимум двумя таймфреймами";return d;});
   const errors=results.filter(x=>x.error).map(x=>x.error),best=candidates[0];
   if(!best)return {none:true,errors,diagnostics,requestedTimeframe};
@@ -385,5 +385,5 @@ export function formatOpenTrade(trade) {
   const a=trade.analysis||{};
   const assetLabel=trade.assetType==="stock"?"Акция":trade.assetType==="forex"?"Валютная пара":"Криптовалюта";
   const symbolLabel=trade.symbol.endsWith("USDT")?trade.symbol.replace("USDT","/USDT"):trade.symbol.length===6?trade.symbol.slice(0,3)+"/"+trade.symbol.slice(3):trade.symbol;
-  return "📊 <b>A|MORE SIGNALS — "+(trade.mode==="atm"?"ATM · БЫСТРЫЙ ПРОГНОЗ":"СТРОГИЙ ДЕМО-ПРОГНОЗ")+"</b>\n\n<b>"+assetLabel+":</b> "+symbolLabel+"\n"+(trade.direction==="UP"?"🟢 <b>СТАВКА: ВВЕРХ ↑</b>":"🔴 <b>СТАВКА: ВНИЗ ↓</b>")+"\n\n<b>Время входа: "+(trade.entryTimeMsk||mskTime(trade.entryAt||trade.openedAt))+" МСК</b>\n<b>Таймфрейм:</b> "+tf+" · экспирация "+TIMEFRAMES[tf].label+"\n<b>Цена на момент сигнала:</b> "+trade.entry+"\n<b>Ожидаемое окончание:</b> "+mskTime(trade.settleAt)+" МСК\n\n<b>ПОЧЕМУ ЭТО НАПРАВЛЕНИЕ</b>\n"+(a.explanation||trade.reasons.join("; "))+"\n\n<b>Техническая картина</b>\n• Тренд: "+(a.trend||"—")+"\n• Свечной паттерн: "+(a.pattern||"—")+"\n• RSI (14): "+(a.rsi??"—")+"\n• Поддержка: "+(a.support??"—")+"\n• Сопротивление: "+(a.resistance??"—")+"\n• ADX (сила тренда): "+(a.adx??"—")+"\n• MACD: "+(a.macd??"—")+"\n• Структура: "+(a.structure??"—")+"\n• Подтверждения модели: "+trade.score+"/6\n• Согласование таймфреймов: "+(trade.timeframeAgreement||1)+(trade.timeframeAgreement>1?"/3":"/1")+"\n\n<i>Источник: "+(trade.marketSource||"внешние рыночные данные")+". Не поток Pocket Option и не OTC-котировка. Сигнал не гарантирует результат; сверь инструмент и цену у брокера.</i>";
+  return "📊 <b>A|MORE SIGNALS — "+(trade.mode==="atm"?"ATM · БЫСТРЫЙ ПРОГНОЗ":"СТРОГИЙ ДЕМО-ПРОГНОЗ")+"</b>\n\n<b>"+assetLabel+":</b> "+symbolLabel+"\n"+(trade.direction==="UP"?"🟢 <b>СТАВКА: ВВЕРХ ↑</b>":"🔴 <b>СТАВКА: ВНИЗ ↓</b>")+"\n\n<b>Время входа: "+(trade.entryTimeMsk||mskTime(trade.entryAt||trade.openedAt))+" МСК</b>\n<b>Таймфрейм:</b> "+tf+" · экспирация "+TIMEFRAMES[tf].label+"\n<b>Цена на момент сигнала:</b> "+trade.entry+"\n<b>Ожидаемое окончание:</b> "+mskTime(trade.settleAt)+" МСК\n\n<b>Уверенность:</b> "+(a.confidence||"Не оценена")+" · <b>факторы:</b> "+trade.score+"/6\n\n<b>ПОЧЕМУ ЭТО НАПРАВЛЕНИЕ</b>\n"+(a.explanation||trade.reasons.join("; "))+"\n\n<b>Техническая картина</b>\n• Тренд: "+(a.trend||"—")+"\n• Свечной паттерн: "+(a.pattern||"—")+"\n• RSI (14): "+(a.rsi??"—")+"\n• Поддержка: "+(a.support??"—")+"\n• Сопротивление: "+(a.resistance??"—")+"\n• ADX (сила тренда): "+(a.adx??"—")+"\n• MACD: "+(a.macd??"—")+"\n• Структура: "+(a.structure??"—")+"\n• Подтверждения модели: "+trade.score+"/6\n• Согласование таймфреймов: "+(trade.timeframeAgreement||1)+(trade.timeframeAgreement>1?"/3":"/1")+"\n\n<i>Источник: "+(trade.marketSource||"внешние рыночные данные")+". Не поток Pocket Option и не OTC-котировка. Сигнал не гарантирует результат; сверь инструмент и цену у брокера.</i>";
 }
