@@ -3,6 +3,8 @@ import { getDemoAccount, applyDemoResult } from "./demo.js";
 const TRADE_STAKE = 10;
 const PAYOUT = 0.8;
 const PAIRS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"];
+// Ordinary shares listed in Pocket Option's published asset schedule. OTC instruments are deliberately excluded.
+export const STOCKS = ["AAPL","TSLA","MSFT","AMZN","NFLX","META","INTC","AMD","CSCO","BA","V","AXP","JNJ","PFE","JPM","C","MCD","XOM","BABA","FDX","GME","COIN","PLTR","MARA"];
 function mskTime(timestamp) { return new Intl.DateTimeFormat("ru-RU", {timeZone:"Europe/Moscow",hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"}).format(new Date(timestamp)); }
 export const TIMEFRAMES = {
   "1m": { label: "1 минута", expiryMs: 60000, rank: 1 },
@@ -11,6 +13,18 @@ export const TIMEFRAMES = {
   "30m": { label: "30 минут", expiryMs: 1800000, rank: 4 }
 };
 async function candles(symbol, interval) {
+  if (STOCKS.includes(symbol)) {
+    const bar={"1m":"1m","5m":"5m","15m":"15m","30m":"30m","1h":"60m","4h":"60m"}[interval];
+    const response=await fetch("https://query1.finance.yahoo.com/v8/finance/chart/"+symbol+"?range=5d&interval="+bar,{headers:{accept:"application/json"},signal:AbortSignal.timeout(9000)});
+    if(!response.ok)throw new Error("Yahoo Finance HTTP "+response.status);
+    const payload=await response.json(),result=payload.chart?.result?.[0];
+    if(payload.chart?.error||!result)throw new Error(payload.chart?.error?.description||"Yahoo Finance: нет данных для "+symbol);
+    const q=result.indicators?.quote?.[0],times=result.timestamp||[];
+    const rows=times.map((t,i)=>({open:Number(q?.open?.[i]),high:Number(q?.high?.[i]),low:Number(q?.low?.[i]),close:Number(q?.close?.[i]),volume:Number(q?.volume?.[i]||0),closeTime:t*1000+({"1m":60000,"5m":300000,"15m":900000,"30m":1800000,"1h":3600000,"4h":14400000}[interval])-1}))
+      .filter(x=>[x.open,x.high,x.low,x.close,x.closeTime].every(Number.isFinite)&&x.open>0&&x.high>0&&x.low>0&&x.close>0);
+    if(rows.length<30)throw new Error("Yahoo Finance: недостаточно свечей для "+symbol);
+    return rows;
+  }
   const failures=[];
   const normalize=(rows,mapper)=>rows.map(mapper).filter(x=>[x.open,x.high,x.low,x.close,x.closeTime].every(Number.isFinite)&&x.open>0&&x.high>0&&x.low>0&&x.close>0);
   try {
@@ -71,6 +85,14 @@ async function candles(symbol, interval) {
   throw new Error(failures.join("; ")||"нет доступных источников свечей");
 }
 async function currentPrice(symbol) {
+  if (STOCKS.includes(symbol)) {
+    const response=await fetch("https://query1.finance.yahoo.com/v8/finance/chart/"+symbol+"?range=1d&interval=1m",{headers:{accept:"application/json"},signal:AbortSignal.timeout(7000)});
+    if(!response.ok)throw new Error("Yahoo Finance HTTP "+response.status);
+    const payload=await response.json(),result=payload.chart?.result?.[0];
+    const price=Number(result?.meta?.regularMarketPrice);
+    if(payload.chart?.error||!Number.isFinite(price)||price<=0)throw new Error(payload.chart?.error?.description||"Yahoo Finance: нет текущей цены для "+symbol);
+    return price;
+  }
   const failures=[];
   try {
     const response=await fetch("https://api.binance.com/api/v3/ticker/price?symbol="+symbol,{headers:{accept:"application/json"},signal:AbortSignal.timeout(7000)});
@@ -185,7 +207,7 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
   if(account.trading.balance<TRADE_STAKE)throw new Error("На демо-балансе A|MORE Signals недостаточно средств.");
   const intervals=requestedTimeframe==="auto"?Object.keys(TIMEFRAMES):[requestedTimeframe];
   if(!TIMEFRAMES[requestedTimeframe]&&requestedTimeframe!=="auto")throw new Error("Неизвестный таймфрейм.");
-  if(requestedPair!=="ALL"&&!PAIRS.includes(requestedPair))throw new Error("Неизвестная валютная пара.");
+  if(requestedPair!=="ALL"&&!PAIRS.includes(requestedPair)&&!STOCKS.includes(requestedPair))throw new Error("Неизвестный актив.");
   const selectedPairs=requestedPair==="ALL"?PAIRS:[requestedPair];
   const tasks=[];for(const interval of intervals)for(const symbol of selectedPairs)tasks.push({interval,symbol});
   const results=await Promise.all(tasks.map(async task=>{try{return {...task,signal:analyze(await candles(task.symbol,task.interval))};}catch(e){return {...task,error:task.symbol+" "+task.interval+": "+e.message};}}));
@@ -196,7 +218,7 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
   if(!best)return {none:true,errors,diagnostics,requestedTimeframe};
   const entry=await currentPrice(best.symbol);
   const now=Date.now(),duration=TIMEFRAMES[best.timeframe].expiryMs;
-  const trade={id:String(chatId)+":"+now,symbol:best.symbol,timeframe:best.timeframe,direction:best.direction,entry,stake:TRADE_STAKE,payout:PAYOUT,openedAt:now,entryAt:now,entryTimeMsk:mskTime(now),settleAt:now+duration,expiryMs:duration,reasons:best.reasons,score:best.score,analysis:best.analysis,marketSource:"агрегированные спотовые котировки"};
+  const trade={id:String(chatId)+":"+now,symbol:best.symbol,timeframe:best.timeframe,direction:best.direction,entry,stake:TRADE_STAKE,payout:PAYOUT,openedAt:now,entryAt:now,entryTimeMsk:mskTime(now),settleAt:now+duration,expiryMs:duration,reasons:best.reasons,score:best.score,analysis:best.analysis,assetType:STOCKS.includes(best.symbol)?"stock":"crypto",marketSource:STOCKS.includes(best.symbol)?"Yahoo Finance · обычный биржевой рынок":"агрегированные спотовые котировки"};
   await env.SUBSCRIBERS.put(key,JSON.stringify(trade),{expirationTtl:Math.ceil(duration/1000)+300});
   return {trade};
 }
