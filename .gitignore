@@ -1,1 +1,5 @@
-node_modules/\n.wrangler/\n.dev.vars\n.env\n.DS_Store\n
+node_modules/
+.wrangler/
+.dev.vars
+.env
+.DS_Store
