@@ -41,17 +41,17 @@ function analyze(rows) {
   const slow = ema(closes.slice(-40), 21);
   const momentum = rsi(closes, 14);
   let up = 0, down = 0;
-  const reasons = [];
-  if (fast > slow) { up++; reasons.push("EMA 9 выше EMA 21"); }
-  if (fast < slow) { down++; reasons.push("EMA 9 ниже EMA 21"); }
-  if (momentum >= 52 && momentum <= 68) { up++; reasons.push("RSI в бычьей зоне (" + momentum.toFixed(1) + ")"); }
-  if (momentum <= 48 && momentum >= 32) { down++; reasons.push("RSI в медвежьей зоне (" + momentum.toFixed(1) + ")"); }
-  if (last.close > last.open && last.close > prev.close) { up++; reasons.push("положительная свечная динамика"); }
-  if (last.close < last.open && last.close < prev.close) { down++; reasons.push("отрицательная свечная динамика"); }
+  const upReasons = [], downReasons = [];
+  if (fast > slow) { up++; upReasons.push("EMA 9 выше EMA 21"); }
+  if (fast < slow) { down++; downReasons.push("EMA 9 ниже EMA 21"); }
+  if (momentum >= 52 && momentum <= 68) { up++; upReasons.push("RSI в бычьей зоне (" + momentum.toFixed(1) + ")"); }
+  if (momentum <= 48 && momentum >= 32) { down++; downReasons.push("RSI в медвежьей зоне (" + momentum.toFixed(1) + ")"); }
+  if (last.close > last.open && last.close > prev.close) { up++; upReasons.push("положительная свечная динамика"); }
+  if (last.close < last.open && last.close < prev.close) { down++; downReasons.push("отрицательная свечная динамика"); }
   const direction = up > down ? "UP" : down > up ? "DOWN" : null;
   const score = Math.max(up, down);
   if (!direction || score < 3) return null;
-  return { direction, score, reasons, entry: last.close, candleCloseTime: last.closeTime };
+  return { direction, score, reasons: direction === "UP" ? upReasons : downReasons, entry: last.close, candleCloseTime: last.closeTime };
 }
 
 export async function openTradingDemo(env, chatId) {
