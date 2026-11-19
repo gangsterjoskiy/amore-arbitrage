@@ -294,6 +294,7 @@ async function handle(update, env) {
     const label = (timeframe === "auto" ? "все таймфреймы M1/M5/M15/M30" : timeframe + " (" + TIMEFRAMES[timeframe].label + ")") + " • " + pairLabel;
     await send(env, chatId, "🔎 Анализирую закрытые свечи: " + label + "…");
     try {
+      if (await env.SUBSCRIBERS.get("user:stop:" + chatId)) throw new Error("A|MORE STOP включён. Возобнови работу кнопкой RESUME.");
       const result = await openTradingDemo(env, chatId, timeframe, pair);
       if (result.active) await send(env, chatId, "У тебя уже есть активный прогноз:\n\n" + formatOpenTrade(result.active));
       else if (result.none) {
@@ -363,6 +364,9 @@ export default {
     if (url.pathname === "/api/signal" && request.method === "POST") {
       try {
         const chatId = await telegramMiniAppUser(request, env);
+        if (await env.SUBSCRIBERS.get("user:stop:" + chatId)) {
+          return Response.json({error:"A|MORE STOP включён. Возобнови работу кнопкой RESUME."},{status:423,headers:{"cache-control":"no-store"}});
+        }
         const body = await request.json();
         const timeframe = body.timeframe || "auto";
         const pair = body.pair || "ALL";
