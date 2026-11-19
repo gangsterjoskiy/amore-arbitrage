@@ -161,13 +161,10 @@ async function telegramMiniAppUser(request, env) {
   const signingKey = await crypto.subtle.importKey("raw", secret, {name:"HMAC",hash:"SHA-256"}, false, ["sign"]);
   const signature = new Uint8Array(await crypto.subtle.sign("HMAC", signingKey, encoder.encode(checkString)));
   const calculatedHash = Array.from(signature).map(x => x.toString(16).padStart(2,"0")).join("");
-  if (calculatedHash.length !== receivedHash.length || !crypto.subtle.timingSafeEqual) {
-    if (calculatedHash !== receivedHash) throw new Error("Не удалось подтвердить Telegram-сессию.");
-  } else {
-    let mismatch = 0;
-    for (let i=0;i<calculatedHash.length;i++) mismatch |= calculatedHash.charCodeAt(i) ^ receivedHash.charCodeAt(i);
-    if (mismatch) throw new Error("Не удалось подтвердить Telegram-сессию.");
-  }
+  if (calculatedHash.length !== receivedHash.length) throw new Error("Не удалось подтвердить Telegram-сессию.");
+  let mismatch = 0;
+  for (let i=0;i<calculatedHash.length;i++) mismatch |= calculatedHash.charCodeAt(i) ^ receivedHash.charCodeAt(i);
+  if (mismatch) throw new Error("Не удалось подтвердить Telegram-сессию.");
   let user;
   try { user = JSON.parse(params.get("user") || "null"); } catch {}
   if (!user || !Number.isInteger(Number(user.id))) throw new Error("Telegram не передал ID пользователя.");
