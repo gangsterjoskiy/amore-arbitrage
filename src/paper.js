@@ -8,9 +8,7 @@ export const STOCKS = ["AAPL","TSLA","MSFT","AMZN","NFLX","META","INTC","AMD","C
 function mskTime(timestamp) { return new Intl.DateTimeFormat("ru-RU", {timeZone:"Europe/Moscow",hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"}).format(new Date(timestamp)); }
 export const TIMEFRAMES = {
   "1m": { label: "1 минута", expiryMs: 60000, rank: 1 },
-  "5m": { label: "5 минут", expiryMs: 300000, rank: 2 },
-  "15m": { label: "15 минут", expiryMs: 900000, rank: 3 },
-  "30m": { label: "30 минут", expiryMs: 1800000, rank: 4 }
+  "5m": { label: "5 минут", expiryMs: 300000, rank: 2 }
 };
 async function candles(symbol, interval) {
   if (STOCKS.includes(symbol)) {
