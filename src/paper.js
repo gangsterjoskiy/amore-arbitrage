@@ -303,7 +303,9 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
       rows=task.interval==="1m"?base:aggregateCandles(base,Number(task.interval.slice(0,-1)));
       if(rows.length<30)throw new Error("недостаточно закрытых Forex-свечей");
     }else rows=await candles(task.symbol,task.interval);
-    rows=rows.filter(c=>c.closeTime<Date.now()-1000);\n    if(rows.length<30)throw new Error("недостаточно закрытых свечей после фильтрации незавершённой свечи");\n    const signal=analyze(rows);
+    rows=rows.filter(c=>c.closeTime<Date.now()-1000);
+    if(rows.length<30)throw new Error("недостаточно закрытых свечей после фильтрации незавершённой свечи");
+    const signal=analyze(rows);
     if(signal.candleCloseTime){
       const intervalMs=TIMEFRAMES[task.interval].expiryMs;
       const age=Date.now()-signal.candleCloseTime;
