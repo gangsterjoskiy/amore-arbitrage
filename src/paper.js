@@ -202,7 +202,7 @@ export async function settleTradingDemos(env) {
       const exit=await currentPrice(trade.symbol);if(!Number.isFinite(exit)||exit<=0)continue;
       const outcome=exit===trade.entry?"draw":(trade.direction==="UP"?exit>trade.entry:exit<trade.entry)?"win":"loss";
       const pnl=outcome==="win"?trade.stake*trade.payout:outcome==="loss"?-trade.stake:0;
-      await applyDemoResult(env,item.name.slice("paper:trading:".length),"trading",pnl,outcome);
+      await applyDemoResult(env,item.name.slice("paper:trading:".length),"trading",pnl,outcome,{type:"signal",symbol:trade.symbol,timeframe:trade.timeframe,direction:trade.direction,entry:trade.entry,exit,stake:trade.stake,score:trade.score});
       await env.SUBSCRIBERS.delete(item.name);
       const label=outcome==="win"?"✅ ПРОГНОЗ СБЫЛСЯ":outcome==="loss"?"❌ ПРОГНОЗ НЕ СБЫЛСЯ":"➖ НИЧЬЯ";
       const text="⏱ <b>A|MORE Signals — результат демо-прогноза</b>\n"+label+"\nПара: <b>"+trade.symbol+"</b>\nТаймфрейм: <b>"+(trade.timeframe||"1m")+"</b>\nПрогноз: <b>"+trade.direction+"</b>\nВход: "+trade.entry+"\nЦена после экспирации: "+exit+"\nP/L: <b>"+(pnl>0?"+":"")+pnl.toFixed(2)+" USDT</b>\n<i>Демо-модель. Это не исполнение у брокера.</i>";
