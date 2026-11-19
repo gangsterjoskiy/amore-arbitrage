@@ -332,6 +332,13 @@ export default {
         return Response.json({ok:true,stopped:true});
       } catch(e) { return Response.json({error:e.message},{status:401}); }
     }
+    if (url.pathname === "/api/reset" && request.method === "POST") {
+      try {
+        const chatId = await telegramMiniAppUser(request, env);
+        const account = await resetDemoAccount(env, chatId);
+        return Response.json({ok:true,account},{headers:{"cache-control":"no-store"}});
+      } catch(e) { return Response.json({error:e.message},{status:401}); }
+    }
     if (url.pathname === "/api/resume" && request.method === "POST") {
       try {
         const chatId = await telegramMiniAppUser(request, env);
