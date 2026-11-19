@@ -211,6 +211,7 @@ async function handle(update, env) {
     const allowedPairs = ["ALL","BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"];
     if (["1m","5m","15m","30m","auto"].includes(requested) && allowedPairs.includes(pair)) webAction = "trade:" + requested + ":" + pair;
   }
+  if (!webAction && ["stop","resume","demo","stats","scan","help","demo_reset","arbi_demo"].includes(startArg)) webAction = startArg;
   const action = cb?.data || webAction;
   if (command === "/stop" || startArg === "stop" || action === "stop") {
     await env.SUBSCRIBERS.put("user:stop:" + chatId, "1");
