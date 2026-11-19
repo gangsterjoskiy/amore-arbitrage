@@ -50,7 +50,9 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
   if(account.trading.balance<TRADE_STAKE)throw new Error("На демо-балансе A|MORE Signals недостаточно средств.");
   const intervals=requestedTimeframe==="auto"?Object.keys(TIMEFRAMES):[requestedTimeframe];
   if(!TIMEFRAMES[requestedTimeframe]&&requestedTimeframe!=="auto")throw new Error("Неизвестный таймфрейм.");
-  if(requestedPair!=="ALL"&&!PAIRS.includes(requestedPair))throw new Error("Неизвестная валютная пара.");\n  const selectedPairs=requestedPair==="ALL"?PAIRS:[requestedPair];\n  const tasks=[];for(const interval of intervals)for(const symbol of selectedPairs)tasks.push({interval,symbol});
+  if(requestedPair!=="ALL"&&!PAIRS.includes(requestedPair))throw new Error("Неизвестная валютная пара.");
+  const selectedPairs=requestedPair==="ALL"?PAIRS:[requestedPair];
+  const tasks=[];for(const interval of intervals)for(const symbol of selectedPairs)tasks.push({interval,symbol});
   const results=await Promise.all(tasks.map(async task=>{try{return {...task,signal:analyze(await candles(task.symbol,task.interval))};}catch(e){return {...task,error:task.symbol+" "+task.interval+": "+e.message};}}));
   const candidates=results.filter(x=>x.signal?.direction).map(x=>({symbol:x.symbol,timeframe:x.interval,...x.signal}));
   candidates.sort((a,b)=>b.score-a.score||TIMEFRAMES[b.timeframe].rank-TIMEFRAMES[a.timeframe].rank);
