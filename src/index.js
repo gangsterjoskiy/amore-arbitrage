@@ -116,13 +116,43 @@ async function getMarkets(exchange) {
   return { exchange, markets };
 }
 
+async function getGateMarkets() {
+  const symbols=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"];
+  const rows=await Promise.all(symbols.map(async symbol=>{
+    const pair=symbol.replace("USDT","_USDT");
+    const response=await fetch("https://api.gateio.ws/api/v4/spot/tickers?currency_pair="+pair,{headers:{accept:"application/json"},signal:AbortSignal.timeout(9000)});
+    if(!response.ok)throw new Error("Gate.io "+symbol+" HTTP "+response.status);
+    const data=await response.json(),x=Array.isArray(data)?data[0]:null;
+    if(!x)throw new Error("Gate.io: нет данных "+symbol);
+    return {symbol,bid:Number(x.highest_bid),ask:Number(x.lowest_ask),bidQty:Number(x.highest_size),askQty:Number(x.lowest_size),last:Number(x.last),change:Number(x.change_percentage)};
+  }));
+  const markets=new Map();
+  for(const x of rows)if([x.bid,x.ask,x.bidQty,x.askQty].every(Number.isFinite)&&x.bid>0&&x.ask>=x.bid)markets.set(x.symbol,x);
+  if(!markets.size)throw new Error("Gate.io: нет пригодных USDT-котировок");
+  return {exchange:{id:"Gate.io",fee:"GATE_TAKER_FEE"},markets};
+}
+async function getKucoinMarkets() {
+  const symbols=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"];
+  const rows=await Promise.all(symbols.map(async symbol=>{
+    const pair=symbol.replace("USDT","-USDT");
+    const response=await fetch("https://api.kucoin.com/api/v1/market/orderbook/level1?symbol="+pair,{headers:{accept:"application/json"},signal:AbortSignal.timeout(9000)});
+    if(!response.ok)throw new Error("KuCoin "+symbol+" HTTP "+response.status);
+    const payload=await response.json(),x=payload.data;
+    if(payload.code!=="200000"||!x)throw new Error("KuCoin: нет данных "+symbol);
+    return {symbol,bid:Number(x.bestBid),ask:Number(x.bestAsk),bidQty:Number(x.bestBidSize),askQty:Number(x.bestAskSize)};
+  }));
+  const markets=new Map();
+  for(const x of rows)if([x.bid,x.ask,x.bidQty,x.askQty].every(Number.isFinite)&&x.bid>0&&x.ask>=x.bid)markets.set(x.symbol,x);
+  if(!markets.size)throw new Error("KuCoin: нет пригодных USDT-котировок");
+  return {exchange:{id:"KuCoin",fee:"KUCOIN_TAKER_FEE"},markets};
+}
 function marketTickerSnapshot(venues) {
   return KRAKEN_SYMBOLS.map(symbol => {
     const venue = venues.find(x => x.exchange.id === "Kraken" && x.markets.has(symbol)) || venues.find(x => x.markets.has(symbol));
     if (!venue) return null;
     const market = venue.markets.get(symbol);
     const price = Number.isFinite(market.last) ? market.last : (market.bid + market.ask) / 2;
-    const change = Number.isFinite(market.open) && market.open > 0 ? (price / market.open - 1) * 100 : null;
+    const change = Number.isFinite(market.change) ? market.change : Number.isFinite(market.open) && market.open > 0 ? (price / market.open - 1) * 100 : null;
     return {symbol,price,change,source:venue.exchange.id};
   }).filter(x => x && Number.isFinite(x.price) && x.price > 0);
 }
