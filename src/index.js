@@ -311,7 +311,8 @@ async function handle(update, env) {
     await send(env, chatId, "🔎 Анализирую закрытые свечи: " + label + "…");
     try {
       if (await env.SUBSCRIBERS.get("user:stop:" + chatId)) throw new Error("A|MORE STOP включён. Возобнови работу кнопкой RESUME.");
-      const result = await openTradingDemo(env, chatId, timeframe, pair);
+      const assetType = body.assetType || "forex";
+        const result = await openTradingDemo(env, chatId, timeframe, pair, assetType);
       if (result.none) {
         const diag = (result.diagnostics || []).map(x => "<b>" + html(x.symbol) + " · " + html(x.timeframe) + "</b>: EMA " + html(x.ema) + ", RSI " + x.rsi + ", свеча " + html(x.candle) + ", подтверждения " + x.score + "/4").join("\n");
         const errors = result.errors?.length ? "\n\n⚠️ Ошибки данных:\n" + html(result.errors.join("\n")) : "";
