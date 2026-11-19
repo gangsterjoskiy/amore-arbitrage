@@ -50,8 +50,19 @@ function analyze(rows) {
   if (last.close < last.open && last.close < prev.close) { down++; downReasons.push("отрицательная свечная динамика"); }
   const direction = up > down ? "UP" : down > up ? "DOWN" : null;
   const score = Math.max(up, down);
-  if (!direction || score < 3) return null;
-  return { direction, score, reasons: direction === "UP" ? upReasons : downReasons, entry: last.close, candleCloseTime: last.closeTime };
+  return {
+    direction: direction && score >= 3 ? direction : null,
+    score,
+    reasons: direction === "UP" ? upReasons : direction === "DOWN" ? downReasons : [],
+    entry: last.close,
+    candleCloseTime: last.closeTime,
+    diagnostics: {
+      ema: fast > slow ? "бычья" : fast < slow ? "медвежья" : "нейтральная",
+      rsi: Number(momentum.toFixed(1)),
+      candle: last.close > last.open && last.close > prev.close ? "бычья" : last.close < last.open && last.close < prev.close ? "медвежья" : "нейтральная",
+      score
+    }
+  };
 }
 
 export async function openTradingDemo(env, chatId) {
@@ -60,19 +71,23 @@ export async function openTradingDemo(env, chatId) {
   const active = await env.SUBSCRIBERS.get(key);
   if (active) return { active: JSON.parse(active) };
   const account = await getDemoAccount(env, chatId);
-  if (account.trading.balance < TRADE_STAKE) throw new Error("На демо-балансе Трейдинга недостаточно средств.");
+  if (account.trading.balance < TRADE_STAKE) throw new Error("На демо-балансе A|MORE Signals недостаточно средств.");
   const candidates = [];
+  const diagnostics = [];
   const errors = [];
   for (const symbol of PAIRS) {
     try {
       const rows = await candles(symbol);
       const signal = analyze(rows);
-      if (signal) candidates.push({ symbol, ...signal });
+      if (signal) {
+        diagnostics.push({symbol, ema:signal.diagnostics.ema, rsi:signal.diagnostics.rsi, candle:signal.diagnostics.candle, score:signal.score});
+        if (signal.direction) candidates.push({ symbol, ...signal });
+      }
     } catch (e) { errors.push(symbol + ": " + e.message); }
   }
   candidates.sort((a, b) => b.score - a.score);
   const best = candidates[0];
-  if (!best) return { none: true, errors };
+  if (!best) return { none: true, errors, diagnostics };
   const tickerResponse = await fetch("https://api.binance.com/api/v3/ticker/price?symbol=" + best.symbol, { signal: AbortSignal.timeout(7000) });
   if (!tickerResponse.ok) throw new Error("Не удалось получить цену входа для " + best.symbol);
   const ticker = await tickerResponse.json();
@@ -116,7 +131,7 @@ export async function settleTradingDemos(env) {
       await applyDemoResult(env, item.name.slice("paper:trading:".length), "trading", pnl, outcome);
       await env.SUBSCRIBERS.delete(item.name);
       const label = outcome === "win" ? "✅ ПРОГНОЗ СБЫЛСЯ" : outcome === "loss" ? "❌ ПРОГНОЗ НЕ СБЫЛСЯ" : "➖ НИЧЬЯ";
-      const text = "⏱ <b>Трейдинг — результат демо-сделки</b>\n" + label +
+      const text = "⏱ <b>A|MORE Signals — результат демо-прогноза</b>\n" + label +
         "\nПара: <b>" + trade.symbol + "</b>\nПрогноз: <b>" + trade.direction + "</b>" +
         "\nВход: " + trade.entry + "\nЦена после экспирации: " + exit +
         "\nP/L: <b>" + (pnl > 0 ? "+" : "") + pnl.toFixed(2) + " USDT</b>" +
@@ -131,7 +146,7 @@ export async function settleTradingDemos(env) {
 }
 
 export function formatOpenTrade(trade) {
-  return "🔵 <b>ТРЕЙДИНГ — ДЕМО-СИГНАЛ</b>\n" +
+  return "🔵 <b>A|MORE SIGNALS — ДЕМО-ПРОГНОЗ</b>\n" +
     "Пара: <b>" + trade.symbol + "</b>\n" +
     "Прогноз: <b>" + (trade.direction === "UP" ? "🟢 ВВЕРХ ↑" : "🔴 ВНИЗ ↓") + "</b>\n" +
     "Виртуальная ставка: <b>" + trade.stake + " USDT</b>\n" +
