@@ -1,1 +1,14 @@
-{\n  "name": "amore-arbitrage",\n  "version": "0.1.0",\n  "private": true,\n  "type": "module",\n  "scripts": { "dev": "wrangler dev", "deploy": "wrangler deploy", "check": "node --check src/index.js" },\n  "devDependencies": { "wrangler": "^4.0.0" }\n}\n
+{
+  "name": "amore-arbitrage",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "check": "node --check src/index.js"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
