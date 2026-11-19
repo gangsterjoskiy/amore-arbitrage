@@ -99,7 +99,7 @@ async function send(env, chatId, text, extra = {}) {
   return tg(env, "sendMessage", {chat_id:chatId,text,parse_mode:"HTML",disable_web_page_preview:true,...extra});
 }
 function help() {
-  return "🧭 <b>A|MORE ARBITRAGE</b>\n\n/scan — сканировать рынок\n/subscribe — включить сигналы\n/unsubscribe — отключить сигналы\n/help — помощь\n\nБот сравнивает ask покупки и bid продажи, затем вычитает заданные taker-комиссии. Вывод, сети, проскальзывание и полный стакан пока не учитываются. Сигнал — повод проверить рынок, не гарантия прибыли.";
+  return "🧭 <b>A|MORE</b>\\n\\n/demo — показать демо-балансы\\n/demo_reset — сбросить оба виртуальных счёта\\n/scan — сканировать рынок\\n/subscribe — включить сигналы\\n/unsubscribe — отключить сигналы\\n/help — помощь\\n\\nАрби ищет расчётные межбиржевые расхождения. Демо-счета пока служат учётной основой для будущей симуляции сделок; сами по себе они не доказывают точность сигналов.";
 }
 function report(data, env) {
   const threshold = setting(env.MIN_NET_SPREAD_PERCENT, 0.25, 20);
