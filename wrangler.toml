@@ -8,3 +8,4 @@ crons = ["* * * * *"]
 [[kv_namespaces]]
 binding = "SUBSCRIBERS"
 id = "2cdb027c62064080b9f5f2ba422ac11a"
+\n[assets]\ndirectory = "./public"\nbinding = "ASSETS"\nrun_worker_first = true\n
