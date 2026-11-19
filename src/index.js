@@ -1,4 +1,4 @@
-import { getDemoAccount, resetDemoAccount, formatDemoAccount } from "./demo.js";
+import { getDemoAccount, resetDemoAccount, formatDemoAccount, applyDemoResult } from "./demo.js";\nimport { openTradingDemo, settleTradingDemos, formatOpenTrade } from "./paper.js";
 
 
 const EXCHANGES = [
@@ -92,7 +92,7 @@ async function tg(env, method, body) {
 const keyboard = { inline_keyboard: [
   [{text:"🔎 Сканировать рынок",callback_data:"scan"}],
   [{text:"🔔 Подписаться",callback_data:"subscribe"},{text:"🔕 Отписаться",callback_data:"unsubscribe"}],
-  [{text:"🧪 Демо-балансы",callback_data:"demo"}],
+  [{text:"🧪 Демо-балансы",callback_data:"demo"}],\n  [{text:"🟢 Арби — демо-сделка",callback_data:"arbi_demo"},{text:"🔵 Трейдинг — сигнал",callback_data:"trade"}],
   [{text:"ℹ️ Помощь",callback_data:"help"}]
 ]};
 async function send(env, chatId, text, extra = {}) {
@@ -143,6 +143,29 @@ async function handle(update, env) {
       const account = await resetDemoAccount(env, chatId);
       await send(env, chatId, "♻️ Оба виртуальных счёта сброшены до 1 000 USDT.\n\n" + formatDemoAccount(account), {reply_markup:keyboard});
     } catch (e) { await send(env, chatId, "⚠️ Не удалось сбросить демо-счета: " + html(e.message)); }
+  } else if (command === "/trade" || action === "trade") {
+    await send(env, chatId, "🔎 Анализирую закрытые минутные свечи BTC, ETH, SOL, BNB и XRP…");
+    try {
+      const result = await openTradingDemo(env, chatId);
+      if (result.active) await send(env, chatId, "У тебя уже есть активный прогноз:\\n\\n" + formatOpenTrade(result.active));
+      else if (result.none) await send(env, chatId, "⏸ <b>Трейдинг: сигнала нет.</b>\\nУсловия стратегии не совпали. Не открываю виртуальную сделку ради количества.");
+      else await send(env, chatId, formatOpenTrade(result.trade));
+    } catch (e) { await send(env, chatId, "⚠️ Не удалось открыть демо-прогноз: " + html(e.message)); }
+  } else if (command === "/arbi_demo" || action === "arbi_demo") {
+    await send(env, chatId, "🔎 Арби проверяет текущие межбиржевые котировки…");
+    try {
+      const account = await getDemoAccount(env, chatId);
+      const stake = 100;
+      if (account.arbi.balance < stake) throw new Error("На демо-балансе Арби недостаточно средств.");
+      const data = await scan(env);
+      const best = data.opportunities[0];
+      if (!best) await send(env, chatId, "⏸ <b>Арби: возможности нет.</b> Не открываю виртуальную сделку без положительного расчётного net-спреда.");
+      else {
+        const pnl = Number((stake * best.net / 100).toFixed(8));
+        const updated = await applyDemoResult(env, chatId, "arbi", pnl, "win");
+        await send(env, chatId, "🟢 <b>АРБИ — ДЕМО-СДЕЛКА ЗАПИСАНА</b>\\nПара: <b>" + html(best.symbol) + "</b>\\nКупить: " + price(best.buy) + " • " + html(best.buyExchange) + "\\nПродать: " + price(best.sell) + " • " + html(best.sellExchange) + "\\nВиртуальный объём: " + stake.toFixed(2) + " USDT\\nРасчётный net: +" + best.net.toFixed(3) + "%\\nМодельный P/L: <b>+" + pnl.toFixed(4) + " USDT</b>\\nБаланс Арби: <b>" + updated.arbi.balance.toFixed(2) + " USDT</b>\\n\\n<i>Это расчёт по лучшим котировкам, не подтверждённое исполнение двух ордеров. Реальные комиссии, глубина и проскальзывание могут изменить результат.</i>");
+      }
+    } catch (e) { await send(env, chatId, "⚠️ Демо-скан Арби не завершён: " + html(e.message)); }
   } else if (["/start","/help"].includes(command) || action === "help") {
     await send(env, chatId, "⚡ <b>Добро пожаловать в A|MORE ARBITRAGE</b>\nСканер межбиржевых расхождений цен.\n\n" + help(), {reply_markup:keyboard});
   } else if (command === "/scan" || action === "scan") await runScan(env, chatId);
