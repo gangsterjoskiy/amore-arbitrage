@@ -86,7 +86,7 @@ async function getMarkets(exchange) {
 
 function marketTickerSnapshot(venues) {
   return KRAKEN_SYMBOLS.map(symbol => {
-    const venue = venues.find(x => x.markets.has(symbol));
+    const venue = venues.find(x => x.exchange.id === "Kraken" && x.markets.has(symbol)) || venues.find(x => x.markets.has(symbol));
     if (!venue) return null;
     const market = venue.markets.get(symbol);
     const price = Number.isFinite(market.last) ? market.last : (market.bid + market.ask) / 2;
