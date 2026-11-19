@@ -286,7 +286,7 @@ function analyze(rows,mode="strict") {
     else if(score<3)rejection="недостаточно подтверждений (нужно минимум 3 из 6)";
     if(rejection)direction=null;
   }
-  const confidence=score>=5?"Высокая":score>=4?"Средняя":"Низкая";
+  const confidence=score>=5?"Сильный":score>=3?"Средний":"Слабый";
   const trend=fast>slow?"восходящий":fast<slow?"нисходящий":"боковой";
   const activePatterns=up>down?patterns.bull:down>up?patterns.bear:[];
   const patternText=activePatterns.length?activePatterns.join(", "):patterns.neutral.length?patterns.neutral.join(", "):"чёткого паттерна нет";
@@ -307,7 +307,7 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
   // Каждый запрос создаёт отдельный прогноз. Уже открытые прогнозы не блокируют новые.
   const account=await getDemoAccount(env,chatId);
   if(account.trading.balance<TRADE_STAKE)throw new Error("На демо-балансе A|MORE Signals недостаточно средств.");
-  const intervals=requestedMode==="atm"?(requestedTimeframe==="auto"?["1m"]:[requestedTimeframe]):requestedTimeframe==="auto"?Object.keys(TIMEFRAMES):[requestedTimeframe];
+  const intervals=requestedMode==="atm"?Object.keys(TIMEFRAMES):requestedTimeframe==="auto"?Object.keys(TIMEFRAMES):[requestedTimeframe];
   if(!TIMEFRAMES[requestedTimeframe]&&requestedTimeframe!=="auto")throw new Error("Неизвестный таймфрейм.");
   if(requestedPair!=="ALL"&&!PAIRS.includes(requestedPair)&&!STOCKS.includes(requestedPair))throw new Error("Неизвестный актив.");
   const selectedPairs=requestedPair==="ALL"?(requestedAssetType==="crypto"?CRYPTO_PAIRS:requestedAssetType==="stocks"?STOCKS:FOREX_PAIRS):[requestedPair];
@@ -344,7 +344,7 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
     candidates=rawCandidates.map(candidate=>({...candidate,agreement:rawCandidates.filter(other=>other.symbol===candidate.symbol&&other.direction===candidate.direction).length}));
   }else candidates=candidates.map(candidate=>({...candidate,agreement:1}));
   // Авто выбирает лучший прошедший строгие фильтры таймфрейм; совпадение других ТФ повышает приоритет, но не блокирует прогноз.
-  candidates.sort((a,b)=>(b.score+(b.agreement-1)*0.75)-(a.score+(a.agreement-1)*0.75)||b.score-a.score||TIMEFRAMES[b.timeframe].rank-TIMEFRAMES[a.timeframe].rank);
+  candidates.sort((a,b)=>(b.score+(b.agreement-1)*0.75)-(a.score+(a.agreement-1)*0.75)||b.score-a.score||(requestedMode==="atm"?TIMEFRAMES[a.timeframe].rank-TIMEFRAMES[b.timeframe].rank:TIMEFRAMES[b.timeframe].rank-TIMEFRAMES[a.timeframe].rank));
   const diagnostics=results.filter(x=>x.signal).map(x=>({symbol:x.symbol,timeframe:x.interval,...x.signal.diagnostics,agreement:rawCandidates.filter(other=>other.symbol===x.symbol&&other.direction===x.signal.direction).length}));
   const errors=results.filter(x=>x.error).map(x=>x.error),best=candidates[0];
   if(!best)return {none:true,errors,diagnostics,requestedTimeframe};
