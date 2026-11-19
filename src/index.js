@@ -397,7 +397,7 @@ export default {
         const body = await request.json();
         const timeframe = body.timeframe || "auto";
         const pair = body.pair || "ALL";
-        const result = await openTradingDemo(env, chatId, timeframe, pair);
+        const result = await openTradingDemo(env, chatId, timeframe, pair, body.assetType || "forex");
         if (result.trade) await send(env, chatId, formatOpenTrade(result.trade));
         return Response.json(result,{headers:{"cache-control":"no-store"}});
       } catch(e) { return Response.json({error:e.message},{status:400,headers:{"cache-control":"no-store"}}); }
