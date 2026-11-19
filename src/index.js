@@ -99,7 +99,8 @@ async function tg(env, method, body) {
   if (!r.ok || !data.ok) throw new Error(data.description || "Telegram API error");
   return data.result;
 }
-const keyboard = { inline_keyboard: [\n  [{text:"◈ Открыть A|MORE Terminal",web_app:{url:"https://amore-arbitrage.hn29wknr7h.workers.dev/app/"}}],
+const keyboard = { inline_keyboard: [
+  [{text:"◈ Открыть A|MORE Terminal",web_app:{url:"https://amore-arbitrage.hn29wknr7h.workers.dev/app/"}}],
   [{text:"📊 A|MORE Arbitrage — сканировать",callback_data:"scan"}],
   [{text:"📈 A|MORE Signals — выбрать таймфрейм",callback_data:"trade_menu"}],
   [{text:"💼 Демо-балансы",callback_data:"demo"},{text:"🧾 Статистика",callback_data:"stats"}],
@@ -161,7 +162,8 @@ async function handle(update, env) {
   if (!chatId) return;
   if (cb) await tg(env, "answerCallbackQuery", {callback_query_id:cb.id});
   const command = (msg?.text || "").trim().split(/\s+/)[0].toLowerCase();
-  let webAction;\n  if (msg?.web_app_data?.data) { try { const payload=JSON.parse(msg.web_app_data.data); if(payload.action==="signal_analysis" && ["1m","5m","15m","30m","auto"].includes(payload.timeframe)) webAction="trade:"+payload.timeframe; } catch {} }\n  const action = cb?.data || webAction;
+  let webAction;
+  if (msg?.web_app_data?.data) { try { const payload=JSON.parse(msg.web_app_data.data); if(payload.action==="signal_analysis" && ["1m","5m","15m","30m","auto"].includes(payload.timeframe)) webAction="trade:"+payload.timeframe; } catch {} }\n  const action = cb?.data || webAction;
   if (command === "/demo" || action === "demo") {
     try {
       const account = await getDemoAccount(env, chatId);
