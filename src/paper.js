@@ -295,26 +295,32 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
   if(requestedPair!=="ALL"&&!PAIRS.includes(requestedPair)&&!STOCKS.includes(requestedPair))throw new Error("Неизвестный актив.");
   const selectedPairs=requestedPair==="ALL"?(requestedAssetType==="crypto"?CRYPTO_PAIRS:requestedAssetType==="stocks"?STOCKS:FOREX_PAIRS):[requestedPair];
   const tasks=[];for(const interval of intervals)for(const symbol of selectedPairs)tasks.push({interval,symbol});
-  const forexBaseCache=new Map();
-  const results=await Promise.all(tasks.map(async task=>{try{
-    let rows;
-    if(FOREX_PAIRS.includes(task.symbol)){
-      if(!forexBaseCache.has(task.symbol))forexBaseCache.set(task.symbol,candles(task.symbol,"1m"));
-      const base=await forexBaseCache.get(task.symbol);
-      rows=task.interval==="1m"?base:aggregateCandles(base,Number(task.interval.slice(0,-1)));
-      if(rows.length<30)throw new Error("недостаточно закрытых Forex-свечей");
-    }else rows=await candles(task.symbol,task.interval);
-    rows=rows.filter(c=>c.closeTime<Date.now()-1000);
-    if(rows.length<30)throw new Error("недостаточно закрытых свечей после фильтрации незавершённой свечи");
-    const signal=analyze(rows);
-    if(signal.candleCloseTime){
-      const intervalMs=TIMEFRAMES[task.interval].expiryMs;
-      const age=Date.now()-signal.candleCloseTime;
-      if(age>intervalMs+90000)throw new Error("устаревшие свечи: последняя закрытая свеча старше допустимого интервала");
-      if(age< -30000)throw new Error("время свечи из будущего — источник данных отклонён");
-    }
-    return {...task,signal};
-  }catch(e){return {...task,error:task.symbol+" "+task.interval+": "+e.message};}}));
+  const forexBaseCache=new Map(),results=new Array(tasks.length);
+  let taskCursor=0;
+  const worker=async()=>{while(true){
+    const index=taskCursor++;if(index>=tasks.length)return;
+    const task=tasks[index];
+    try{
+      let rows;
+      if(FOREX_PAIRS.includes(task.symbol)){
+        if(!forexBaseCache.has(task.symbol))forexBaseCache.set(task.symbol,candles(task.symbol,"1m"));
+        const base=await forexBaseCache.get(task.symbol);
+        rows=task.interval==="1m"?base:aggregateCandles(base,Number(task.interval.slice(0,-1)));
+        if(rows.length<30)throw new Error("недостаточно закрытых Forex-свечей");
+      }else rows=await candles(task.symbol,task.interval);
+      rows=rows.filter(c=>c.closeTime<Date.now()-1000);
+      if(rows.length<30)throw new Error("недостаточно закрытых свечей после фильтрации незавершённой свечи");
+      const signal=analyze(rows);
+      if(signal.candleCloseTime){
+        const intervalMs=TIMEFRAMES[task.interval].expiryMs;
+        const age=Date.now()-signal.candleCloseTime;
+        if(age>intervalMs+90000)throw new Error("устаревшие свечи: последняя закрытая свеча старше допустимого интервала");
+        if(age< -30000)throw new Error("время свечи из будущего — источник данных отклонён");
+      }
+      results[index]={...task,signal};
+    }catch(e){results[index]={...task,error:task.symbol+" "+task.interval+": "+e.message};}
+  }};
+  await Promise.all(Array.from({length:Math.min(5,tasks.length)},()=>worker()));
   const rawCandidates=results.filter(x=>x.signal?.direction).map(x=>({symbol:x.symbol,timeframe:x.interval,...x.signal}));
   let candidates=rawCandidates;
   if(requestedTimeframe==="auto"){
