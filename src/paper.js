@@ -229,7 +229,7 @@ function analyze(rows) {
   return {direction:direction&&score>=3?direction:null,score,reasons:direction==="UP"?upReasons:direction==="DOWN"?downReasons:[],entry:last.close,candleCloseTime:last.closeTime,analysis,
     diagnostics:{ema:trend,rsi:analysis.rsi,candle:analysis.candle,patterns,score,direction:direction||"нет"}};
 }
-export async function openTradingDemo(env,chatId,requestedTimeframe="auto",requestedPair="ALL") {
+export async function openTradingDemo(env,chatId,requestedTimeframe="auto",requestedPair="ALL",requestedAssetType="forex") {
   if(!env.SUBSCRIBERS)throw new Error("KV namespace SUBSCRIBERS is not configured");
   if(await env.SUBSCRIBERS.get("user:stop:"+chatId))throw new Error("A|MORE STOP включён. Возобнови работу кнопкой в Telegram-боте.");
   // Каждый запрос создаёт отдельный прогноз. Уже открытые прогнозы не блокируют новые.
@@ -238,7 +238,7 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
   const intervals=requestedTimeframe==="auto"?Object.keys(TIMEFRAMES):[requestedTimeframe];
   if(!TIMEFRAMES[requestedTimeframe]&&requestedTimeframe!=="auto")throw new Error("Неизвестный таймфрейм.");
   if(requestedPair!=="ALL"&&!PAIRS.includes(requestedPair)&&!STOCKS.includes(requestedPair))throw new Error("Неизвестный актив.");
-  const selectedPairs=requestedPair==="ALL"?FOREX_PAIRS:[requestedPair];
+  const selectedPairs=requestedPair==="ALL"?(requestedAssetType==="crypto"?CRYPTO_PAIRS:FOREX_PAIRS):[requestedPair];
   const tasks=[];for(const interval of intervals)for(const symbol of selectedPairs)tasks.push({interval,symbol});
   const results=await Promise.all(tasks.map(async task=>{try{
     const rows=await candles(task.symbol,task.interval);
