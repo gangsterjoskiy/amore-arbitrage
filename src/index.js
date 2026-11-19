@@ -116,21 +116,6 @@ async function getMarkets(exchange) {
   return { exchange, markets };
 }
 
-async function getGateMarkets() {
-  const symbols=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"];
-  const rows=await Promise.all(symbols.map(async symbol=>{
-    const pair=symbol.replace("USDT","_USDT");
-    const response=await fetch("https://api.gateio.ws/api/v4/spot/tickers?currency_pair="+pair,{headers:{accept:"application/json"},signal:AbortSignal.timeout(9000)});
-    if(!response.ok)throw new Error("Gate.io "+symbol+" HTTP "+response.status);
-    const data=await response.json(),x=Array.isArray(data)?data[0]:null;
-    if(!x)throw new Error("Gate.io: нет данных "+symbol);
-    return {symbol,bid:Number(x.highest_bid),ask:Number(x.lowest_ask),bidQty:Number(x.highest_size),askQty:Number(x.lowest_size),last:Number(x.last),change:Number(x.change_percentage)};
-  }));
-  const markets=new Map();
-  for(const x of rows)if([x.bid,x.ask,x.bidQty,x.askQty].every(Number.isFinite)&&x.bid>0&&x.ask>=x.bid)markets.set(x.symbol,x);
-  if(!markets.size)throw new Error("Gate.io: нет пригодных USDT-котировок");
-  return {exchange:{id:"Gate.io",fee:"GATE_TAKER_FEE"},markets};
-}
 async function getKucoinMarkets() {
   const symbols=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"];
   const rows=await Promise.all(symbols.map(async symbol=>{
@@ -157,7 +142,7 @@ function marketTickerSnapshot(venues) {
   }).filter(x => x && Number.isFinite(x.price) && x.price > 0);
 }
 async function scan(env) {
-  const settled = await Promise.allSettled([...EXCHANGES.map(getMarkets), getKrakenMarkets(), getGateMarkets()]);
+  const settled = await Promise.allSettled([...EXCHANGES.map(getMarkets), getKrakenMarkets(), getGateMarkets(), getKucoinMarkets()]);
   const venues = settled.filter(x => x.status === "fulfilled").map(x => x.value);
   const errors = settled.flatMap(x => x.status === "rejected" ? [String(x.reason?.message || x.reason)] : (x.value.errors || []));
   if (venues.length < 2) {
