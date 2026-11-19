@@ -147,6 +147,32 @@ async function runScan(env, chatId) {
   try { const data = await scan(env); await send(env, chatId, report(data, env), {reply_markup:keyboard}); }
   catch (e) { await send(env, chatId, "⚠️ Сканирование не завершено: " + html(e.message), {reply_markup:keyboard}); }
 }
+async function telegramMiniAppUser(request, env) {
+  const initData = request.headers.get("X-Telegram-Init-Data") || "";
+  if (!initData || !env.TELEGRAM_BOT_TOKEN) throw new Error("Telegram авторизация недоступна. Открой Mini App из Telegram.");
+  const params = new URLSearchParams(initData);
+  const receivedHash = params.get("hash");
+  const authDate = Number(params.get("auth_date"));
+  if (!receivedHash || !Number.isFinite(authDate) || Math.abs(Date.now()/1000-authDate) > 86400) throw new Error("Сессия Telegram устарела. Закрой и снова открой Mini App.");
+  const checkString = [...params.entries()].filter(([key]) => key !== "hash").sort(([a],[b]) => a.localeCompare(b)).map(([key,value]) => key + "=" + value).join("\n");
+  const encoder = new TextEncoder();
+  const secretBase = await crypto.subtle.importKey("raw", encoder.encode("WebAppData"), {name:"HMAC",hash:"SHA-256"}, false, ["sign"]);
+  const secret = await crypto.subtle.sign("HMAC", secretBase, encoder.encode(env.TELEGRAM_BOT_TOKEN));
+  const signingKey = await crypto.subtle.importKey("raw", secret, {name:"HMAC",hash:"SHA-256"}, false, ["sign"]);
+  const signature = new Uint8Array(await crypto.subtle.sign("HMAC", signingKey, encoder.encode(checkString)));
+  const calculatedHash = Array.from(signature).map(x => x.toString(16).padStart(2,"0")).join("");
+  if (calculatedHash.length !== receivedHash.length || !crypto.subtle.timingSafeEqual) {
+    if (calculatedHash !== receivedHash) throw new Error("Не удалось подтвердить Telegram-сессию.");
+  } else {
+    let mismatch = 0;
+    for (let i=0;i<calculatedHash.length;i++) mismatch |= calculatedHash.charCodeAt(i) ^ receivedHash.charCodeAt(i);
+    if (mismatch) throw new Error("Не удалось подтвердить Telegram-сессию.");
+  }
+  let user;
+  try { user = JSON.parse(params.get("user") || "null"); } catch {}
+  if (!user || !Number.isInteger(Number(user.id))) throw new Error("Telegram не передал ID пользователя.");
+  return Number(user.id);
+}
 async function dashboard(env) {
   const [scanResult, tickerResult] = await Promise.allSettled([
     scan(env),
@@ -280,6 +306,40 @@ export default {
     if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/app" || url.pathname === "/app/")) {
       const assetUrl = new URL("/index.html", url.origin);
       return env.ASSETS ? env.ASSETS.fetch(new Request(assetUrl, request)) : new Response("Mini App assets are not configured",{status:503});
+    }
+    if (url.pathname === "/api/account" && request.method === "GET") {
+      try {
+        const chatId = await telegramMiniAppUser(request, env);
+        const account = await getDemoAccount(env, chatId);
+        const rawTrade = await env.SUBSCRIBERS.get("paper:trading:" + chatId);
+        return Response.json({account,activeTrade:rawTrade ? JSON.parse(rawTrade) : null,stopped:!!(await env.SUBSCRIBERS.get("user:stop:" + chatId))},{headers:{"cache-control":"no-store"}});
+      } catch(e) { return Response.json({error:e.message},{status:401,headers:{"cache-control":"no-store"}}); }
+    }
+    if (url.pathname === "/api/signal" && request.method === "POST") {
+      try {
+        const chatId = await telegramMiniAppUser(request, env);
+        const body = await request.json();
+        const timeframe = body.timeframe || "auto";
+        const pair = body.pair || "ALL";
+        const result = await openTradingDemo(env, chatId, timeframe, pair);
+        if (result.trade) await send(env, chatId, formatOpenTrade(result.trade));
+        return Response.json(result,{headers:{"cache-control":"no-store"}});
+      } catch(e) { return Response.json({error:e.message},{status:400,headers:{"cache-control":"no-store"}}); }
+    }
+    if (url.pathname === "/api/stop" && request.method === "POST") {
+      try {
+        const chatId = await telegramMiniAppUser(request, env);
+        await env.SUBSCRIBERS.put("user:stop:" + chatId, "1");
+        await env.SUBSCRIBERS.delete("chat:" + chatId);
+        return Response.json({ok:true,stopped:true});
+      } catch(e) { return Response.json({error:e.message},{status:401}); }
+    }
+    if (url.pathname === "/api/resume" && request.method === "POST") {
+      try {
+        const chatId = await telegramMiniAppUser(request, env);
+        await env.SUBSCRIBERS.delete("user:stop:" + chatId);
+        return Response.json({ok:true,stopped:false});
+      } catch(e) { return Response.json({error:e.message},{status:401}); }
     }
     if (request.method === "GET" && url.pathname === "/api/dashboard") {
       try { return Response.json(await dashboard(env), {headers:{"cache-control":"no-store"} }); }
