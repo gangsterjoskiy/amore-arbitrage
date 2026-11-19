@@ -74,7 +74,8 @@ export async function applyDemoResult(env, chatId, bot, pnl, outcome, details = 
 
 export function formatDemoAccount(account) {
   const line = (name, wallet, kind) => {
-    const accuracy = wallet.trades ? ((wallet.wins / wallet.trades) * 100).toFixed(1) : "—";
+    const resolved = wallet.wins + wallet.losses;
+    const accuracy = resolved ? ((wallet.wins / resolved) * 100).toFixed(1) : "—";
     const stats = kind === "arbi"
       ? "Модельных записей: " + wallet.trades
       : "Прогнозов: " + wallet.trades + " • ✅ " + wallet.wins + " • ❌ " + wallet.losses + " • ➖ " + wallet.draws;
