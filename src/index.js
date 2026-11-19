@@ -312,8 +312,7 @@ async function handle(update, env) {
     try {
       if (await env.SUBSCRIBERS.get("user:stop:" + chatId)) throw new Error("A|MORE STOP включён. Возобнови работу кнопкой RESUME.");
       const result = await openTradingDemo(env, chatId, timeframe, pair);
-      if (result.active) await send(env, chatId, "У тебя уже есть активный прогноз:\n\n" + formatOpenTrade(result.active));
-      else if (result.none) {
+      if (result.none) {
         const diag = (result.diagnostics || []).map(x => "<b>" + html(x.symbol) + " · " + html(x.timeframe) + "</b>: EMA " + html(x.ema) + ", RSI " + x.rsi + ", свеча " + html(x.candle) + ", подтверждения " + x.score + "/4").join("\n");
         const errors = result.errors?.length ? "\n\n⚠️ Ошибки данных:\n" + html(result.errors.join("\n")) : "";
         await send(env, chatId, "⏸ <b>A|MORE Signals: подтверждённого сигнала пока нет.</b>\nПроверены: " + label + ". Фильтры не ослаблялись. Диагностика:\n\n" + (diag || "Недостаточно данных для анализа.") + errors + "\n\nМожно выбрать другой период или режим «Авто». Сигналы не генерируются искусственно.", {reply_markup:{inline_keyboard:[[{text:"⚡ M1",callback_data:"trade:1m"},{text:"🎯 M5",callback_data:"trade:5m"},{text:"🕒 M15",callback_data:"trade:15m"},{text:"📊 M30",callback_data:"trade:30m"}],[{text:"🤖 Проверить все периоды",callback_data:"trade:auto"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]}});
@@ -375,9 +374,17 @@ export default {
         // Reconcile expired demo forecasts before showing the account state.
         await settleTradingDemos(env);
         const account = await getDemoAccount(env, chatId);
-        const rawTrade = await env.SUBSCRIBERS.get("paper:trading:" + chatId);
+        const legacyTradeRaw = await env.SUBSCRIBERS.get("paper:trading:" + chatId);
+        const activeKeys = await env.SUBSCRIBERS.list({prefix:"paper:trading:" + chatId + ":",limit:1000});
+        const activeTrades = [];
+        for (const item of activeKeys.keys) {
+          const raw = await env.SUBSCRIBERS.get(item.name);
+          if (raw) { try { activeTrades.push(JSON.parse(raw)); } catch {} }
+        }
+        if (legacyTradeRaw) { try { activeTrades.push(JSON.parse(legacyTradeRaw)); } catch {} }
+        activeTrades.sort((a,b)=>Number(b.openedAt||b.entryAt||0)-Number(a.openedAt||a.entryAt||0));
         const history = await getDemoHistory(env, chatId);
-        return Response.json({account,history,activeTrade:rawTrade ? JSON.parse(rawTrade) : null,stopped:!!(await env.SUBSCRIBERS.get("user:stop:" + chatId))},{headers:{"cache-control":"no-store"}});
+        return Response.json({account,history,activeTrade:activeTrades[0]||null,activeTrades,stopped:!!(await env.SUBSCRIBERS.get("user:stop:" + chatId))},{headers:{"cache-control":"no-store"}});
       } catch(e) { return Response.json({error:e.message},{status:401,headers:{"cache-control":"no-store"}}); }
     }
     if (url.pathname === "/api/signal" && request.method === "POST") {
