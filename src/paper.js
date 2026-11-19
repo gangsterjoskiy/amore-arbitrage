@@ -310,7 +310,8 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
   const intervals=requestedMode==="atm"?Object.keys(TIMEFRAMES):requestedTimeframe==="auto"?Object.keys(TIMEFRAMES):[requestedTimeframe];
   if(!TIMEFRAMES[requestedTimeframe]&&requestedTimeframe!=="auto")throw new Error("Неизвестный таймфрейм.");
   if(requestedPair!=="ALL"&&!PAIRS.includes(requestedPair)&&!STOCKS.includes(requestedPair))throw new Error("Неизвестный актив.");
-  const selectedPairs=requestedPair==="ALL"?(requestedAssetType==="crypto"?CRYPTO_PAIRS:requestedAssetType==="stocks"?STOCKS:FOREX_PAIRS):[requestedPair];
+  const assetUniverse=requestedAssetType==="crypto"?CRYPTO_PAIRS:requestedAssetType==="stocks"?STOCKS:FOREX_PAIRS;
+  const selectedPairs=requestedPair==="ALL"?assetUniverse:requestedMode==="atm"?[requestedPair,...assetUniverse.filter(x=>x!==requestedPair)]:[requestedPair];
   const tasks=[];for(const interval of intervals)for(const symbol of selectedPairs)tasks.push({interval,symbol});
   const forexBaseCache=new Map(),results=new Array(tasks.length);
   let taskCursor=0;
@@ -348,10 +349,12 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
   const diagnostics=results.filter(x=>x.signal).map(x=>({symbol:x.symbol,timeframe:x.interval,...x.signal.diagnostics,agreement:rawCandidates.filter(other=>other.symbol===x.symbol&&other.direction===x.signal.direction).length}));
   const errors=results.filter(x=>x.error).map(x=>x.error),best=candidates[0];
   if(!best)return {none:true,errors,diagnostics,requestedTimeframe};
-  const entry=await currentPrice(best.symbol);
+  let entry,entrySource="текущая котировка";
+  try{entry=await currentPrice(best.symbol);}catch{entry=best.entry;entrySource="последняя закрытая реальная свеча (резерв)";}
+  if(!Number.isFinite(entry)||entry<=0)throw new Error("Нет достоверной цены входа для выбранного сигнала.");
   const now=Date.now(),duration=TIMEFRAMES[best.timeframe].expiryMs;
   const id=String(chatId)+":"+now+":"+crypto.randomUUID();
-  const trade={id,symbol:best.symbol,timeframe:best.timeframe,mode:requestedMode,direction:best.direction,entry,stake:TRADE_STAKE,payout:PAYOUT,openedAt:now,entryAt:now,entryTimeMsk:mskTime(now),settleAt:now+duration,expiryMs:duration,reasons:best.reasons,score:best.score,timeframeAgreement:best.agreement,analysis:best.analysis,signalCandleCloseTime:best.candleCloseTime,assetType:STOCKS.includes(best.symbol)?"stock":FOREX_PAIRS.includes(best.symbol)?"forex":"crypto",marketSource:STOCKS.includes(best.symbol)?"Yahoo Finance · обычный биржевой рынок":FOREX_PAIRS.includes(best.symbol)?"Yahoo Finance · Forex spot (не поток Pocket Option)":"агрегированные спотовые котировки"};
+  const trade={id,symbol:best.symbol,timeframe:best.timeframe,mode:requestedMode,direction:best.direction,entry,entrySource,stake:TRADE_STAKE,payout:PAYOUT,openedAt:now,entryAt:now,entryTimeMsk:mskTime(now),settleAt:now+duration,expiryMs:duration,reasons:best.reasons,score:best.score,timeframeAgreement:best.agreement,analysis:best.analysis,signalCandleCloseTime:best.candleCloseTime,assetType:STOCKS.includes(best.symbol)?"stock":FOREX_PAIRS.includes(best.symbol)?"forex":"crypto",marketSource:STOCKS.includes(best.symbol)?"Yahoo Finance · обычный биржевой рынок":FOREX_PAIRS.includes(best.symbol)?"Yahoo Finance · Forex spot (не поток Pocket Option)":"агрегированные спотовые котировки"};
   const tradeKey="paper:trading:"+chatId+":"+now+":"+crypto.randomUUID();
   await env.SUBSCRIBERS.put(tradeKey,JSON.stringify(trade),{expirationTtl:Math.ceil(duration/1000)+300});
   return {trade};
