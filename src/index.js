@@ -84,13 +84,23 @@ async function getMarkets(exchange) {
   return { exchange, markets };
 }
 
+function marketTickerSnapshot(venues) {
+  return KRAKEN_SYMBOLS.map(symbol => {
+    const venue = venues.find(x => x.markets.has(symbol));
+    if (!venue) return null;
+    const market = venue.markets.get(symbol);
+    const price = Number.isFinite(market.last) ? market.last : (market.bid + market.ask) / 2;
+    const change = Number.isFinite(market.open) && market.open > 0 ? (price / market.open - 1) * 100 : null;
+    return {symbol,price,change};
+  }).filter(x => x && Number.isFinite(x.price) && x.price > 0);
+}
 async function scan(env) {
   const settled = await Promise.allSettled([...EXCHANGES.map(getMarkets), getKrakenMarkets()]);
   const venues = settled.filter(x => x.status === "fulfilled").map(x => x.value);
   const errors = settled.filter(x => x.status === "rejected").map(x => String(x.reason?.message || x.reason));
   if (venues.length < 2) {
     const kraken = venues.find(x => x.exchange.id === "Kraken");
-    return {opportunities:[],exchanges:venues.map(x=>x.exchange.id),errors,diagnostics:{sharedPairs:0,depthRejected:0,bestBeforeThreshold:null,minNet:setting(env.MIN_NET_SPREAD_PERCENT,0.25,20),minDepth:setting(env.MIN_TOP_OF_BOOK_DEPTH_USDT,25,1000000)},marketTickers:kraken?.tickers||[],scanAvailable:false};
+    return {opportunities:[],exchanges:venues.map(x=>x.exchange.id),errors,diagnostics:{sharedPairs:0,depthRejected:0,bestBeforeThreshold:null,minNet:setting(env.MIN_NET_SPREAD_PERCENT,0.25,20),minDepth:setting(env.MIN_TOP_OF_BOOK_DEPTH_USDT,25,1000000)},marketTickers:marketTickerSnapshot(venues),scanAvailable:false};
   }
   const minNet = setting(env.MIN_NET_SPREAD_PERCENT, 0.25, 20);
   const minDepth = setting(env.MIN_TOP_OF_BOOK_DEPTH_USDT, 25, 1000000);
@@ -123,7 +133,7 @@ async function scan(env) {
   return {
     opportunities: found.slice(0, 8), exchanges: venues.map(x => x.exchange.id), errors,
     diagnostics: {sharedPairs,depthRejected,bestBeforeThreshold:rawBest[0] || null,minNet,minDepth},
-    marketTickers:venues.find(x=>x.exchange.id==="Kraken")?.tickers||[],scanAvailable:true
+    marketTickers:marketTickerSnapshot(venues),scanAvailable:true
   };
 }
 
