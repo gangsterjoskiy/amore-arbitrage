@@ -298,7 +298,7 @@ async function handle(update, env) {
   } else if (command === "/stats" || action === "stats") {
     const account = await getDemoAccount(env, chatId);
     const a = account.arbi, t = account.trading;
-    const pct = w => w.trades ? (w.wins / w.trades * 100).toFixed(1) + "%" : "пока нет данных";
+    const pct = w => (w.wins + w.losses) ? (w.wins / (w.wins + w.losses) * 100).toFixed(1) + "%" : "пока нет данных";
     await send(env, chatId, "📊 <b>A|MORE — СТАТИСТИКА ДЕМО</b>\n\n<b>A|MORE Arbitrage</b>\nРасчётных сделок: " + a.trades + "\nМодельный P/L: " + (a.pnl > 0 ? "+" : "") + a.pnl.toFixed(2) + " USDT\n\n<b>A|MORE Signals</b>\nПрогнозов: " + t.trades + "\nУспешных: " + t.wins + " • Неуспешных: " + t.losses + " • Ничьих: " + t.draws + "\nДоля успешных: " + pct(t) + "\nP/L: " + (t.pnl > 0 ? "+" : "") + t.pnl.toFixed(2) + " USDT\n\n<i>Статистика демо-модели. Маленькая выборка не доказывает наличие преимущества.</i>");
   } else if (action === "trade_menu") {
     await send(env, chatId, "📈 <b>A|MORE Signals</b>\nВыбери период свечей. В режиме «Авто» бот проверит все четыре таймфрейма и выберет самый сильный доступный сигнал.", {reply_markup:{inline_keyboard:[[{text:"⚡ M1 · 1 мин",callback_data:"trade:1m"},{text:"🎯 M5 · 5 мин",callback_data:"trade:5m"}],[{text:"🕒 M15 · 15 мин",callback_data:"trade:15m"},{text:"📊 M30 · 30 мин",callback_data:"trade:30m"}],[{text:"🤖 Авто · все периоды",callback_data:"trade:auto"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]}});
