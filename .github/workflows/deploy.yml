@@ -30,3 +30,19 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Smoke test deployed Mini App and market APIs
+        run: |
+          set -e
+          for attempt in {1..10}; do
+            if curl -fsS "$WORKER_URL/health" -o /tmp/amore-health.json; then break; fi
+            sleep 3
+          done
+          node -e "const x=require('/tmp/amore-health.json'); if(!x.ok) process.exit(1)"
+          curl -fsS "$WORKER_URL/" -o /tmp/amore-index.html
+          grep -q "A|MORE Terminal" /tmp/amore-index.html
+          curl -fsS "$WORKER_URL/api/dashboard" -o /tmp/amore-dashboard.json
+          node -e "const x=require('/tmp/amore-dashboard.json'); if(!Array.isArray(x.tickers)||x.tickers.length<1||x.marketStatus!=='live') { console.error(x); process.exit(1) }"
+          curl -fsS "$WORKER_URL/api/candles?symbol=BTCUSDT&interval=1m" -o /tmp/amore-candles.json
+          node -e "const x=require('/tmp/amore-candles.json'); if(!Array.isArray(x)||x.length<30) process.exit(1)"
+        env:
+          WORKER_URL: https://amore-arbitrage.hn29wknr7h.workers.dev
