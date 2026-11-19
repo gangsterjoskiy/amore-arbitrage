@@ -60,6 +60,8 @@ async function scan(env) {
   const minNet = setting(env.MIN_NET_SPREAD_PERCENT, 0.25, 20);
   const minDepth = setting(env.MIN_TOP_OF_BOOK_DEPTH_USDT, 25, 1000000);
   const found = [];
+  const rawBest = [];
+  let sharedPairs = 0, depthRejected = 0;
   for (let i = 0; i < venues.length; i++) for (let j = 0; j < venues.length; j++) {
     if (i === j) continue;
     const buyVenue = venues[i], sellVenue = venues[j];
@@ -68,10 +70,13 @@ async function scan(env) {
     for (const [symbol, buy] of buyVenue.markets) {
       const sell = sellVenue.markets.get(symbol);
       if (!sell) continue;
+      sharedPairs++;
       const depth = Math.min(buy.ask * buy.askQty, sell.bid * sell.bidQty);
-      if (!Number.isFinite(depth) || depth < minDepth) continue;
       const gross = (sell.bid / buy.ask - 1) * 100;
       const net = (sell.bid * (1 - sellFee / 100) / (buy.ask * (1 + buyFee / 100)) - 1) * 100;
+      const candidate = {symbol,buyExchange:buyVenue.exchange.id,sellExchange:sellVenue.exchange.id,buy:buy.ask,sell:sell.bid,gross,net,depth,buyFee,sellFee};
+      if (Number.isFinite(net)) rawBest.push(candidate);
+      if (!Number.isFinite(depth) || depth < minDepth) { depthRejected++; continue; }
       if (Number.isFinite(net) && net >= minNet) found.push({
         symbol, buyExchange: buyVenue.exchange.id, sellExchange: sellVenue.exchange.id,
         buy: buy.ask, sell: sell.bid, gross, net, depth, buyFee, sellFee
@@ -79,7 +84,11 @@ async function scan(env) {
     }
   }
   found.sort((a, b) => b.net - a.net);
-  return { opportunities: found.slice(0, 8), exchanges: venues.map(x => x.exchange.id), errors };
+  rawBest.sort((a,b) => b.net-a.net);
+  return {
+    opportunities: found.slice(0, 8), exchanges: venues.map(x => x.exchange.id), errors,
+    diagnostics: {sharedPairs,depthRejected,bestBeforeThreshold:rawBest[0] || null,minNet,minDepth}
+  };
 }
 
 async function tg(env, method, body) {
@@ -104,11 +113,22 @@ async function send(env, chatId, text, extra = {}) {
 function help() {
   return "🧭 <b>A|MORE — главное меню</b>\n\n<b>📊 A|MORE Arbitrage</b> — сравнение цен на спотовых биржах и расчёт net-спреда.\n<b>📈 A|MORE Signals</b> — анализ минутных свечей и виртуальные прогнозы направления.\n<b>💼 Демо-балансы</b> — отдельные виртуальные счета двух модулей.\n<b>🧾 Статистика</b> — результаты тестирования.\n\nВсе сделки виртуальные. Межбиржевой спред не означает, что ордера реально исполнимы. Точность сигналов не подтверждена статистически. Для управления используй кнопки меню ниже.";
 }
+function minDepthFallback(env) { return setting(env.MIN_TOP_OF_BOOK_DEPTH_USDT,25,1000000); }
 function report(data, env) {
   const threshold = setting(env.MIN_NET_SPREAD_PERCENT, 0.25, 20);
   let out = "🟢 <b>A|MORE ARBITRAGE</b>\n<i>Spot USDT • публичные котировки</i>\n";
   out += "Биржи онлайн: <b>" + html(data.exchanges.join(", ")) + "</b>\nПорог net: <b>" + threshold.toFixed(2) + "%</b>\n\n";
-  if (!data.opportunities.length) out += "Пока нет возможностей выше порога. Бот не будет придумывать сигналы.";
+  if (!data.opportunities.length) {
+    const d = data.diagnostics || {};
+    out += "Пока нет возможностей выше порога. Бот не будет придумывать сигналы.\\n\\n";
+    out += "Совпадающих пар между биржами: <b>" + (d.sharedPairs ?? 0) + "</b>\\n";
+    out += "Отсеяно по глубине стакана: <b>" + (d.depthRejected ?? 0) + "</b> (минимум ~$" + (d.minDepth ?? minDepthFallback(env)) + ")\\n";
+    if (d.bestBeforeThreshold) {
+      const b=d.bestBeforeThreshold;
+      out += "Лучший net до фильтра: <b>" + b.net.toFixed(3) + "%</b> — " + html(b.symbol) + " (" + html(b.buyExchange) + " → " + html(b.sellExchange) + ")\\n";
+      out += "До заданного порога не хватает " + Math.max(0,d.minNet-b.net).toFixed(3) + " п.п.\\n";
+    } else out += "Не удалось получить пригодную общую пару с корректными котировками.\\n";
+  }
   for (let i = 0; i < data.opportunities.length; i++) {
     const x = data.opportunities[i];
     out += "<b>" + (i+1) + ". " + html(x.symbol.replace("USDT","/USDT")) + "</b>\n";
@@ -168,7 +188,7 @@ async function handle(update, env) {
     try {
       const account = await getDemoAccount(env, chatId);
       const stake = 100;
-      if (account.arbi.balance < stake) throw new Error("На демо-балансе Арби недостаточно средств.");
+      if (account.arbi.balance < stake) throw new Error("На демо-балансе A|MORE Arbitrage недостаточно средств.");
       const data = await scan(env);
       const best = data.opportunities[0];
       if (!best) await send(env, chatId, "⏸ <b>A|MORE Arbitrage: возможности нет.</b> Не открываю виртуальную сделку без положительного расчётного net-спреда.");
