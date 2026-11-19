@@ -27,6 +27,38 @@ const EXCHANGES = [
 ];
 
 const KRAKEN_SYMBOLS = ["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"];
+async function getGateMarkets() {
+  const base = "https://api.gateio.ws/api/v4";
+  const symbols = ["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"];
+  const tickersResponse = await fetch(base + "/spot/tickers", {headers:{accept:"application/json"},signal:AbortSignal.timeout(9000)});
+  if (!tickersResponse.ok) throw new Error("Gate.io tickers HTTP " + tickersResponse.status);
+  const tickers = await tickersResponse.json();
+  if (!Array.isArray(tickers)) throw new Error("Gate.io: некорректный ответ тикеров");
+  const tickerMap = new Map(tickers.filter(x => x.currency_pair).map(x => [x.currency_pair.replace("_",""),x]));
+  const results = await Promise.allSettled(symbols.map(async symbol => {
+    const pair = symbol.replace("USDT","_USDT");
+    const ticker = tickerMap.get(symbol);
+    if (!ticker) throw new Error("Gate.io: нет пары " + pair);
+    const response = await fetch(base + "/spot/order_book?currency_pair=" + pair + "&limit=1", {headers:{accept:"application/json"},signal:AbortSignal.timeout(9000)});
+    if (!response.ok) throw new Error("Gate.io order book " + pair + " HTTP " + response.status);
+    const book = await response.json();
+    const bid = Number(book.bids?.[0]?.[0]), bidQty = Number(book.bids?.[0]?.[1]);
+    const ask = Number(book.asks?.[0]?.[0]), askQty = Number(book.asks?.[0]?.[1]);
+    const last = Number(ticker.last), change = Number(ticker.change_percentage);
+    if (![bid,bidQty,ask,askQty,last].every(Number.isFinite) || bid<=0 || ask<=0 || ask<bid || bidQty<=0 || askQty<=0) throw new Error("Gate.io: некорректный стакан " + pair);
+    const open = Number.isFinite(change) && 1 + change/100 > 0 ? last / (1 + change/100) : null;
+    return {symbol,bid,ask,bidQty,askQty,last,open};
+  }));
+  const markets = new Map();
+  const errors = [];
+  for (let i=0;i<results.length;i++) {
+    const result=results[i];
+    if(result.status==="fulfilled") markets.set(symbols[i],result.value);
+    else errors.push(String(result.reason?.message || result.reason));
+  }
+  if (!markets.size) throw new Error(errors.join("; ") || "Gate.io: нет пригодных рынков");
+  return {exchange:{id:"Gate.io",fee:"GATEIO_TAKER_FEE"},markets,errors};
+}
 async function getKrakenMarkets() {
   const pairResponse = await fetch("https://api.kraken.com/0/public/AssetPairs", {headers:{accept:"application/json"},signal:AbortSignal.timeout(9000)});
   if (!pairResponse.ok) throw new Error("Kraken AssetPairs HTTP " + pairResponse.status);
@@ -95,9 +127,9 @@ function marketTickerSnapshot(venues) {
   }).filter(x => x && Number.isFinite(x.price) && x.price > 0);
 }
 async function scan(env) {
-  const settled = await Promise.allSettled([...EXCHANGES.map(getMarkets), getKrakenMarkets()]);
+  const settled = await Promise.allSettled([...EXCHANGES.map(getMarkets), getKrakenMarkets(), getGateMarkets()]);
   const venues = settled.filter(x => x.status === "fulfilled").map(x => x.value);
-  const errors = settled.filter(x => x.status === "rejected").map(x => String(x.reason?.message || x.reason));
+  const errors = settled.flatMap(x => x.status === "rejected" ? [String(x.reason?.message || x.reason)] : (x.value.errors || []));
   if (venues.length < 2) {
     const kraken = venues.find(x => x.exchange.id === "Kraken");
     return {opportunities:[],exchanges:venues.map(x=>x.exchange.id),errors,diagnostics:{sharedPairs:0,depthRejected:0,bestBeforeThreshold:null,minNet:setting(env.MIN_NET_SPREAD_PERCENT,0.25,20),minDepth:setting(env.MIN_TOP_OF_BOOK_DEPTH_USDT,25,1000000)},marketTickers:marketTickerSnapshot(venues),scanAvailable:false};
@@ -110,8 +142,8 @@ async function scan(env) {
   for (let i = 0; i < venues.length; i++) for (let j = 0; j < venues.length; j++) {
     if (i === j) continue;
     const buyVenue = venues[i], sellVenue = venues[j];
-    const buyFee = setting(env[buyVenue.exchange.fee], 0.1, 5);
-    const sellFee = setting(env[sellVenue.exchange.fee], 0.1, 5);
+    const buyFee = setting(env[buyVenue.exchange.fee], buyVenue.exchange.id === "Gate.io" ? 0.2 : 0.1, 5);
+    const sellFee = setting(env[sellVenue.exchange.fee], sellVenue.exchange.id === "Gate.io" ? 0.2 : 0.1, 5);
     for (const [symbol, buy] of buyVenue.markets) {
       const sell = sellVenue.markets.get(symbol);
       if (!sell) continue;
@@ -189,7 +221,7 @@ function report(data, env) {
   return out;
 }
 async function runScan(env, chatId) {
-  await send(env, chatId, "⏳ Получаю котировки Binance, Bybit и OKX…");
+  await send(env, chatId, "⏳ Получаю котировки доступных спотовых бирж…");
   try { const data = await scan(env); await send(env, chatId, report(data, env), {reply_markup:keyboard}); }
   catch (e) { await send(env, chatId, "⚠️ Сканирование не завершено: " + html(e.message), {reply_markup:keyboard}); }
 }
