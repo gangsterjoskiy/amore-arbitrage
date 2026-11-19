@@ -87,6 +87,30 @@ function rsi(values, period=14) {
   if(losses===0)return 100;
   const rs=(gains/period)/(losses/period);return 100-100/(1+rs);
 }
+function candleShape(c) {
+  const body=Math.abs(c.close-c.open),range=Math.max(0,c.high-c.low);
+  return {body,range,upper:c.high-Math.max(c.open,c.close),lower:Math.min(c.open,c.close)-c.low,bull:c.close>c.open,bear:c.close<c.open};
+}
+function detectCandlestickPatterns(rows) {
+  const found={bull:[],bear:[],neutral:[]};
+  if(rows.length<3)return found;
+  const a=rows[rows.length-3],b=rows[rows.length-2],c=rows[rows.length-1];
+  const sa=candleShape(a),sb=candleShape(b),sc=candleShape(c);
+  const midpoint=(a.open+a.close)/2,bodyTop=Math.max(a.open,a.close),bodyBottom=Math.min(a.open,a.close);
+  if(sb.bear&&sc.bull&&c.open<=b.close&&c.close>=b.open)found.bull.push("бычье поглощение");
+  if(sb.bull&&sc.bear&&c.open>=b.close&&c.close<=b.open)found.bear.push("медвежье поглощение");
+  if(sc.range>0&&sc.lower>=sc.body*2&&sc.upper<=Math.max(sc.body*.7,sc.range*.05)&&c.close>=c.open)found.bull.push("молот");
+  if(sc.range>0&&sc.upper>=sc.body*2&&sc.lower<=Math.max(sc.body*.7,sc.range*.05)&&c.close<=c.open)found.bear.push("падающая звезда");
+  if(sa.bear&&sb.body<sa.body*.55&&sc.bull&&c.close>midpoint)found.bull.push("утренняя звезда");
+  if(sa.bull&&sb.body<sa.body*.55&&sc.bear&&c.close<midpoint)found.bear.push("вечерняя звезда");
+  if(sb.bear&&sc.bull&&c.open<b.low&&c.close>=(b.open+b.close)/2&&c.close<b.open)found.bull.push("просвет в облаках");
+  if(sb.bull&&sc.bear&&c.open>b.high&&c.close<=(b.open+b.close)/2&&c.close>b.open)found.bear.push("завеса из тёмных облаков");
+  if(sb.bear&&sc.bull&&c.open>bodyBottom&&c.close<bodyTop)found.bull.push("бычье харами");
+  if(sb.bull&&sc.bear&&c.open<bodyTop&&c.close>bodyBottom)found.bear.push("медвежье харами");
+  if(sc.range>0&&sc.body/sc.range<=.1)found.neutral.push("доджи");
+  if(c.high<b.high&&c.low>b.low)found.neutral.push("внутренний бар");
+  return found;
+}
 function analyze(rows) {
   const closed=rows.slice(0,-1),closes=closed.map(x=>x.close),last=closed[closed.length-1],prev=closed[closed.length-2];
   const fast=ema(closes.slice(-30),9),slow=ema(closes.slice(-40),21),momentum=rsi(closes,14);
@@ -97,9 +121,12 @@ function analyze(rows) {
   if(momentum<=48&&momentum>=32){down++;downReasons.push("RSI в медвежьей зоне ("+momentum.toFixed(1)+")");}
   if(last.close>last.open&&last.close>prev.close){up++;upReasons.push("положительная свечная динамика");}
   if(last.close<last.open&&last.close<prev.close){down++;downReasons.push("отрицательная свечная динамика");}
+  const patterns=detectCandlestickPatterns(closed);
+  if(patterns.bull.length){up++;upReasons.push("свечной паттерн: "+patterns.bull.join(", "));}
+  if(patterns.bear.length){down++;downReasons.push("свечной паттерн: "+patterns.bear.join(", "));}
   const direction=up>down?"UP":down>up?"DOWN":null,score=Math.max(up,down);
   return {direction:direction&&score>=3?direction:null,score,reasons:direction==="UP"?upReasons:direction==="DOWN"?downReasons:[],entry:last.close,candleCloseTime:last.closeTime,
-    diagnostics:{ema:fast>slow?"бычья":fast<slow?"медвежья":"нейтральная",rsi:Number(momentum.toFixed(1)),candle:last.close>last.open&&last.close>prev.close?"бычья":last.close<last.open&&last.close<prev.close?"медвежья":"нейтральная",score,direction:direction||"нет"}};
+    diagnostics:{ema:fast>slow?"бычья":fast<slow?"медвежья":"нейтральная",rsi:Number(momentum.toFixed(1)),candle:last.close>last.open&&last.close>prev.close?"бычья":last.close<last.open&&last.close<prev.close?"медвежья":"нейтральная",patterns,score,direction:direction||"нет"}};
 }
 export async function openTradingDemo(env,chatId,requestedTimeframe="auto",requestedPair="ALL") {
   if(!env.SUBSCRIBERS)throw new Error("KV namespace SUBSCRIBERS is not configured");
