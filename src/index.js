@@ -91,7 +91,7 @@ function marketTickerSnapshot(venues) {
     const market = venue.markets.get(symbol);
     const price = Number.isFinite(market.last) ? market.last : (market.bid + market.ask) / 2;
     const change = Number.isFinite(market.open) && market.open > 0 ? (price / market.open - 1) * 100 : null;
-    return {symbol,price,change};
+    return {symbol,price,change,source:venue.exchange.id};
   }).filter(x => x && Number.isFinite(x.price) && x.price > 0);
 }
 async function scan(env) {
@@ -230,7 +230,7 @@ async function dashboard(env) {
     diagnostics: {sharedPairs:0,depthRejected:0,bestBeforeThreshold:null,minNet:setting(env.MIN_NET_SPREAD_PERCENT,0.25,20),minDepth:minDepthFallback(env)},marketTickers:[]
   };
   const tickers = tickerResult.status === "fulfilled"
-    ? tickerResult.value.filter(x => wanted.has(x.symbol)).map(x => ({symbol:x.symbol,price:Number(x.lastPrice),change:Number(x.priceChangePercent)}))
+    ? tickerResult.value.filter(x => wanted.has(x.symbol)).map(x => ({symbol:x.symbol,price:Number(x.lastPrice),change:Number(x.priceChangePercent),source:"Binance"}))
     : (scanData.marketTickers || []);
   const errors = [...(scanData.errors || [])];
   if (tickerResult.status === "rejected") errors.push(String(tickerResult.reason?.message || tickerResult.reason));
