@@ -50,3 +50,5 @@ jobs:
           node -e "const x=require('/tmp/amore-candles.json'); if(!Array.isArray(x)||x.length<30) process.exit(1)"
         env:
           WORKER_URL: https://amore-arbitrage.hn29wknr7h.workers.dev
+
+# Redeploy trigger: keep this workflow push-enabled for Cloudflare recovery.
