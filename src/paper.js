@@ -19,15 +19,25 @@ function aggregateCandles(rows,minutes){
   for(const row of rows){const start=Math.floor((row.closeTime+1-size)/size)*size;let b=buckets.get(start);if(!b){b={open:row.open,high:row.high,low:row.low,close:row.close,volume:row.volume||0,closeTime:start+size-1,count:0};buckets.set(start,b);}else{b.high=Math.max(b.high,row.high);b.low=Math.min(b.low,row.low);b.close=row.close;b.volume+=row.volume||0;}b.count++;}
   return [...buckets.values()].filter(b=>b.count===minutes).sort((a,b)=>a.closeTime-b.closeTime);
 }
+async function yahooChart(symbol,params) {
+  const failures=[];
+  for(const host of ["query1.finance.yahoo.com","query2.finance.yahoo.com"]){
+    try{
+      const response=await fetch("https://"+host+"/v8/finance/chart/"+encodeURIComponent(symbol)+"?"+params,{headers:{accept:"application/json","user-agent":"Mozilla/5.0 A|MORE Signals"},signal:AbortSignal.timeout(9000)});
+      if(!response.ok)throw new Error("HTTP "+response.status);
+      const payload=await response.json(),result=payload.chart?.result?.[0];
+      if(payload.chart?.error||!result)throw new Error(payload.chart?.error?.description||"пустой ответ");
+      return result;
+    }catch(e){failures.push(host+": "+e.message);}
+  }
+  throw new Error("Yahoo Finance: "+failures.join("; "));
+}
 async function candles(symbol, interval) {
   if (FOREX_PAIRS.includes(symbol)) {
     const ticker=symbol+"=X";
     const bar={"1m":"1m","3m":"1m","5m":"5m"}[interval];
     if(!bar)throw new Error("Для Forex доступны экспирации 1, 3 и 5 минут.");
-    const response=await fetch("https://query1.finance.yahoo.com/v8/finance/chart/"+ticker+"?range=5d&interval="+bar,{headers:{accept:"application/json"},signal:AbortSignal.timeout(9000)});
-    if(!response.ok)throw new Error("Yahoo Finance Forex HTTP "+response.status);
-    const payload=await response.json(),result=payload.chart?.result?.[0];
-    if(payload.chart?.error||!result)throw new Error(payload.chart?.error?.description||"Yahoo Finance: нет Forex-котировок для "+symbol);
+    const result=await yahooChart(ticker,"range=5d&interval="+bar);
     const q=result.indicators?.quote?.[0],times=result.timestamp||[];
     const duration={"1m":60000,"3m":60000,"5m":300000}[interval];
     const rows=times.map((t,i)=>({open:Number(q?.open?.[i]),high:Number(q?.high?.[i]),low:Number(q?.low?.[i]),close:Number(q?.close?.[i]),volume:0,closeTime:t*1000+duration-1}))
@@ -37,10 +47,7 @@ async function candles(symbol, interval) {
   }
   if (STOCKS.includes(symbol)) {
     const bar={"1m":"1m","3m":"1m","5m":"5m","15m":"15m","30m":"30m","1h":"60m","4h":"60m"}[interval];
-    const response=await fetch("https://query1.finance.yahoo.com/v8/finance/chart/"+symbol+"?range=5d&interval="+bar,{headers:{accept:"application/json"},signal:AbortSignal.timeout(9000)});
-    if(!response.ok)throw new Error("Yahoo Finance HTTP "+response.status);
-    const payload=await response.json(),result=payload.chart?.result?.[0];
-    if(payload.chart?.error||!result)throw new Error(payload.chart?.error?.description||"Yahoo Finance: нет данных для "+symbol);
+    const result=await yahooChart(symbol,"range=5d&interval="+bar);
     if(result.meta?.marketState&&result.meta.marketState!=="REGULAR")throw new Error("Биржа акций закрыта или торгуется вне основной сессии. Обычные акции временно недоступны.");
     const q=result.indicators?.quote?.[0],times=result.timestamp||[];
     const rows=times.map((t,i)=>({open:Number(q?.open?.[i]),high:Number(q?.high?.[i]),low:Number(q?.low?.[i]),close:Number(q?.close?.[i]),volume:Number(q?.volume?.[i]||0),closeTime:t*1000+({"1m":60000,"3m":60000,"5m":300000,"15m":900000,"30m":1800000,"1h":3600000,"4h":14400000}[interval])-1}))
@@ -109,19 +116,15 @@ async function candles(symbol, interval) {
 }
 async function currentPrice(symbol) {
   if (FOREX_PAIRS.includes(symbol)) {
-    const response=await fetch("https://query1.finance.yahoo.com/v8/finance/chart/"+symbol+"=X?range=1d&interval=1m",{headers:{accept:"application/json"},signal:AbortSignal.timeout(7000)});
-    if(!response.ok)throw new Error("Yahoo Finance Forex HTTP "+response.status);
-    const payload=await response.json(),result=payload.chart?.result?.[0];
+    const result=await yahooChart(symbol+"=X","range=1d&interval=1m");
     const price=Number(result?.meta?.regularMarketPrice);
-    if(payload.chart?.error||!Number.isFinite(price)||price<=0)throw new Error(payload.chart?.error?.description||"Yahoo Finance: нет текущей Forex-цены для "+symbol);
+    if(!Number.isFinite(price)||price<=0)throw new Error("Yahoo Finance: нет текущей Forex-цены для "+symbol);
     return price;
   }
   if (STOCKS.includes(symbol)) {
-    const response=await fetch("https://query1.finance.yahoo.com/v8/finance/chart/"+symbol+"?range=1d&interval=1m",{headers:{accept:"application/json"},signal:AbortSignal.timeout(7000)});
-    if(!response.ok)throw new Error("Yahoo Finance HTTP "+response.status);
-    const payload=await response.json(),result=payload.chart?.result?.[0];
+    const result=await yahooChart(symbol,"range=1d&interval=1m");
     const price=Number(result?.meta?.regularMarketPrice);
-    if(payload.chart?.error||!Number.isFinite(price)||price<=0)throw new Error(payload.chart?.error?.description||"Yahoo Finance: нет текущей цены для "+symbol);
+    if(!Number.isFinite(price)||price<=0)throw new Error("Yahoo Finance: нет текущей цены для "+symbol);
     return price;
   }
   const failures=[];
