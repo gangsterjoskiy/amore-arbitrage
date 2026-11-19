@@ -43,7 +43,7 @@ header{display:flex;align-items:center;justify-content:space-between;margin:4px 
 <div class="eyebrow">LIVE MARKET / 02</div><h1 class="heading">График и свечи</h1><div class="sub">Binance Spot · публичные рыночные данные</div>
 <div class="control-group"><div class="control-title">Валютная пара <span class="tiny" id="chartPairLabel">BTC / USDT</span></div><div class="chips" id="chartPairs"><button class="chip active" data-symbol="BTCUSDT">BTC</button><button class="chip" data-symbol="ETHUSDT">ETH</button><button class="chip" data-symbol="SOLUSDT">SOL</button><button class="chip" data-symbol="BNBUSDT">BNB</button><button class="chip" data-symbol="XRPUSDT">XRP</button></div></div>
 <div class="control-group"><div class="control-title">Таймфрейм</div><div class="chips" id="chartIntervals"><button class="chip" data-interval="1m">1M</button><button class="chip active" data-interval="5m">5M</button><button class="chip" data-interval="15m">15M</button><button class="chip" data-interval="30m">30M</button><button class="chip" data-interval="1h">1H</button><button class="chip" data-interval="4h">4H</button></div></div>
-<div class="chart-card"><div class="chart-top"><div><div class="eyebrow" id="chartSymbol">BTC / USDT</div><div class="price" id="chartPrice">—</div><div class="tiny" id="chartChange">Загрузка свечей…</div></div><span class="tiny">BINANCE SPOT</span></div><canvas class="chart" id="candleChart"></canvas></div>
+<div class="chart-card"><div class="chart-top"><div><div class="eyebrow" id="chartSymbol">BTC / USDT</div><div class="price" id="chartPrice">—</div><div class="tiny" id="chartChange">Загрузка свечей…</div></div><span class="tiny" id="chartSource">SPOT SOURCE</span></div><canvas class="chart" id="candleChart"></canvas></div>
 <div class="notice">График — информационный. Анализ Signals использует закрытые свечи и не гарантирует результат.</div>
 </section>
 <section id="signals" class="view">
@@ -108,7 +108,7 @@ async function loadDashboard(){
 async function loadCandles(){
  const c=$('candleChart'),ctx=c.getContext('2d');$('chartSymbol').textContent=symbol.replace('USDT',' / USDT');$('chartPairLabel').textContent=symbol.replace('USDT',' / USDT');$('chartPrice').textContent='Загрузка…';
  try{
-  const r=await fetch('/api/candles?symbol='+symbol+'&interval='+interval,{cache:'no-store'});const rows=await r.json();if(!r.ok)throw new Error(rows.error||'HTTP '+r.status);if(!Array.isArray(rows)||!rows.length)throw new Error('Нет свечей');
+  const r=await fetch('/api/candles?symbol='+symbol+'&interval='+interval,{cache:'no-store'});const rows=await r.json();if(!r.ok)throw new Error(rows.error||'HTTP '+r.status);if(!Array.isArray(rows)||!rows.length)throw new Error('Нет свечей');$('chartSource').textContent=(r.headers.get('x-market-source')||'Binance')+' SPOT';
   const dpr=window.devicePixelRatio||1,w=c.clientWidth,h=180;c.width=w*dpr;c.height=h*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h);
   const vals=rows.flatMap(function(x){return [Number(x[2]),Number(x[3])]});const lo=Math.min.apply(null,vals),hi=Math.max.apply(null,vals),pad=(hi-lo)*.12||1,min=lo-pad,max=hi+pad,y=function(v){return h-12-(v-min)/(max-min)*(h-24)};
   ctx.strokeStyle='#29352c';ctx.lineWidth=1;for(let i=0;i<4;i++){const yy=12+i*(h-24)/3;ctx.beginPath();ctx.moveTo(0,yy);ctx.lineTo(w,yy);ctx.stroke()}
