@@ -315,12 +315,13 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
     }
     return {...task,signal};
   }catch(e){return {...task,error:task.symbol+" "+task.interval+": "+e.message};}}));
-  let candidates=results.filter(x=>x.signal?.direction).map(x=>({symbol:x.symbol,timeframe:x.interval,...x.signal}));
+  const rawCandidates=results.filter(x=>x.signal?.direction).map(x=>({symbol:x.symbol,timeframe:x.interval,...x.signal}));
+  let candidates=rawCandidates;
   if(requestedTimeframe==="auto"){
-    candidates=candidates.map(candidate=>({...candidate,agreement:candidates.filter(other=>other.symbol===candidate.symbol&&other.direction===candidate.direction).length})).filter(candidate=>candidate.agreement>=2);
+    candidates=rawCandidates.map(candidate=>({...candidate,agreement:rawCandidates.filter(other=>other.symbol===candidate.symbol&&other.direction===candidate.direction).length})).filter(candidate=>candidate.agreement>=2);
   }else candidates=candidates.map(candidate=>({...candidate,agreement:1}));
   candidates.sort((a,b)=>b.score-a.score||b.agreement-a.agreement||TIMEFRAMES[b.timeframe].rank-TIMEFRAMES[a.timeframe].rank);
-  const diagnostics=results.filter(x=>x.signal).map(x=>({symbol:x.symbol,timeframe:x.interval,...x.signal.diagnostics}));
+  const diagnostics=results.filter(x=>x.signal).map(x=>{const d={symbol:x.symbol,timeframe:x.interval,...x.signal.diagnostics};if(requestedTimeframe==="auto"&&x.signal.direction&&rawCandidates.filter(other=>other.symbol===x.symbol&&other.direction===x.signal.direction).length<2)d.rejection="направление не подтверждено минимум двумя таймфреймами";return d;});
   const errors=results.filter(x=>x.error).map(x=>x.error),best=candidates[0];
   if(!best)return {none:true,errors,diagnostics,requestedTimeframe};
   const entry=await currentPrice(best.symbol);
