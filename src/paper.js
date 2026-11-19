@@ -11,11 +11,24 @@ export const TIMEFRAMES = {
 };
 async function candles(symbol, interval) {
   const url = "https://api.binance.com/api/v3/klines?symbol=" + symbol + "&interval=" + interval + "&limit=60";
-  const response = await fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(9000) });
-  if (!response.ok) throw new Error("Binance candles HTTP " + response.status);
-  const rows = await response.json();
-  if (!Array.isArray(rows) || rows.length < 30) throw new Error("Недостаточно свечей для " + symbol + " (" + interval + ")");
-  return rows.map(x => ({ open:Number(x[1]), high:Number(x[2]), low:Number(x[3]), close:Number(x[4]), volume:Number(x[5]), closeTime:Number(x[6]) }));
+  try {
+    const response = await fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(9000) });
+    if (!response.ok) throw new Error("Binance candles HTTP " + response.status);
+    const rows = await response.json();
+    if (!Array.isArray(rows) || rows.length < 30) throw new Error("Недостаточно свечей Binance");
+    return rows.map(x => ({ open:Number(x[1]), high:Number(x[2]), low:Number(x[3]), close:Number(x[4]), volume:Number(x[5]), closeTime:Number(x[6]) }));
+  } catch (binanceError) {
+    const minutes={"1m":1,"5m":5,"15m":15,"30m":30}[interval];
+    if (!minutes) throw new Error("Binance недоступен для " + interval + ": " + binanceError.message);
+    const pair=symbol.replace("BTC","XBT");
+    const response=await fetch("https://api.kraken.com/0/public/OHLC?pair="+pair+"&interval="+minutes,{headers:{accept:"application/json"},signal:AbortSignal.timeout(9000)});
+    if(!response.ok)throw new Error("Binance: "+binanceError.message+"; Kraken OHLC HTTP "+response.status);
+    const payload=await response.json();
+    if(payload.error?.length)throw new Error("Binance: "+binanceError.message+"; Kraken: "+payload.error.join(", "));
+    const rows=Object.entries(payload.result||{}).find(([key])=>key!=="last")?.[1]||[];
+    if(rows.length<30)throw new Error("Binance: "+binanceError.message+"; Kraken: недостаточно свечей");
+    return rows.map(x=>({open:Number(x[1]),high:Number(x[2]),low:Number(x[3]),close:Number(x[4]),volume:Number(x[6]),closeTime:Number(x[0])*1000+minutes*60000-1}));
+  }
 }
 function ema(values, period) {
   const k=2/(period+1); let result=values[0];
