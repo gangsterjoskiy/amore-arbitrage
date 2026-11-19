@@ -311,7 +311,8 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
   if(!TIMEFRAMES[requestedTimeframe]&&requestedTimeframe!=="auto")throw new Error("Неизвестный таймфрейм.");
   if(requestedPair!=="ALL"&&!PAIRS.includes(requestedPair)&&!STOCKS.includes(requestedPair))throw new Error("Неизвестный актив.");
   const assetUniverse=requestedAssetType==="crypto"?CRYPTO_PAIRS:requestedAssetType==="stocks"?STOCKS:FOREX_PAIRS;
-  // Analyze the selected instrument only. Scanning every instrument here made a single Mini App request run for dozens of Yahoo Finance calls and could exceed Worker request limits. "ALL" remains available for an explicit full-universe scan.\n  const selectedPairs=requestedPair==="ALL"?assetUniverse:[requestedPair];
+  // Analyze the selected instrument only. Scanning every instrument here made a single Mini App request run for dozens of Yahoo Finance calls and could exceed Worker request limits. "ALL" remains available for an explicit full-universe scan.
+  const selectedPairs=requestedPair==="ALL"?assetUniverse:[requestedPair];
   const tasks=[];for(const interval of intervals)for(const symbol of selectedPairs)tasks.push({interval,symbol});
   const forexBaseCache=new Map(),results=new Array(tasks.length);
   let taskCursor=0;
