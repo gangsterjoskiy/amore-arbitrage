@@ -34,14 +34,23 @@ export async function getDemoAccount(env, chatId) {
   return account;
 }
 
+export async function getDemoHistory(env, chatId) {
+  if (!env.SUBSCRIBERS) throw new Error("KV namespace SUBSCRIBERS is not configured");
+  const raw = await env.SUBSCRIBERS.get("demo:history:" + chatId);
+  if (!raw) return [];
+  try { const rows = JSON.parse(raw); return Array.isArray(rows) ? rows : []; }
+  catch { return []; }
+}
+
 export async function resetDemoAccount(env, chatId) {
   const account = { arbi: emptyWallet(), trading: emptyWallet() };
   await env.SUBSCRIBERS.put("demo:" + chatId, JSON.stringify(account));
+  await env.SUBSCRIBERS.put("demo:history:" + chatId, "[]");
   await env.SUBSCRIBERS.delete("paper:trading:" + chatId);
   return account;
 }
 
-export async function applyDemoResult(env, chatId, bot, pnl, outcome) {
+export async function applyDemoResult(env, chatId, bot, pnl, outcome, details = {}) {
   if (!BOTS.includes(bot)) throw new Error("Unknown demo bot");
   if (!Number.isFinite(pnl)) throw new Error("Demo PnL must be a finite number");
   const account = await getDemoAccount(env, chatId);
@@ -54,6 +63,12 @@ export async function applyDemoResult(env, chatId, bot, pnl, outcome) {
   else wallet.draws += 1;
   wallet.updatedAt = new Date().toISOString();
   await env.SUBSCRIBERS.put("demo:" + chatId, JSON.stringify(account));
+  const history = await getDemoHistory(env, chatId);
+  history.unshift({
+    id: String(Date.now()) + ":" + Math.random().toString(36).slice(2, 8),
+    bot, outcome, pnl, at: new Date().toISOString(), ...details
+  });
+  await env.SUBSCRIBERS.put("demo:history:" + chatId, JSON.stringify(history.slice(0, 100)));
   return account;
 }
 
