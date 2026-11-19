@@ -148,13 +148,24 @@ async function runScan(env, chatId) {
   catch (e) { await send(env, chatId, "⚠️ Сканирование не завершено: " + html(e.message), {reply_markup:keyboard}); }
 }
 async function dashboard(env) {
-  const data = await scan(env);
-  const response = await fetch("https://api.binance.com/api/v3/ticker/24hr", { signal: AbortSignal.timeout(9000) });
-  if (!response.ok) throw new Error("Binance 24h HTTP " + response.status);
-  const rows = await response.json();
+  const [scanResult, tickerResult] = await Promise.allSettled([
+    scan(env),
+    fetch("https://api.binance.com/api/v3/ticker/24hr", { signal: AbortSignal.timeout(9000) }).then(async response => {
+      if (!response.ok) throw new Error("Binance 24h HTTP " + response.status);
+      return response.json();
+    })
+  ]);
   const wanted = new Set(["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"]);
-  const tickers = rows.filter(x => wanted.has(x.symbol)).map(x => ({symbol:x.symbol,price:Number(x.lastPrice),change:Number(x.priceChangePercent)}));
-  return {...data,tickers};
+  const tickers = tickerResult.status === "fulfilled"
+    ? tickerResult.value.filter(x => wanted.has(x.symbol)).map(x => ({symbol:x.symbol,price:Number(x.lastPrice),change:Number(x.priceChangePercent)}))
+    : [];
+  const scanData = scanResult.status === "fulfilled" ? scanResult.value : {
+    opportunities: [], exchanges: [], errors: [String(scanResult.reason?.message || scanResult.reason)],
+    diagnostics: {sharedPairs:0,depthRejected:0,bestBeforeThreshold:null,minNet:setting(env.MIN_NET_SPREAD_PERCENT,0.25,20),minDepth:minDepthFallback(env)}
+  };
+  const errors = [...(scanData.errors || [])];
+  if (tickerResult.status === "rejected") errors.push(String(tickerResult.reason?.message || tickerResult.reason));
+  return {...scanData,tickers,errors,marketStatus:tickers.length ? "live" : "offline",scanStatus:scanResult.status === "fulfilled" ? "live" : "unavailable"};
 }
 async function handle(update, env) {
   const msg = update.message, cb = update.callback_query;
@@ -259,7 +270,7 @@ export default {
     }
     if (request.method === "GET" && url.pathname === "/api/dashboard") {
       try { return Response.json(await dashboard(env), {headers:{"cache-control":"no-store"} }); }
-      catch(e) { return Response.json({error:e.message},{status:502,headers:{"cache-control":"no-store"}}); }
+      catch(e) { return Response.json({error:e.message},{status:200,headers:{"cache-control":"no-store"}}); }
     }
     if (request.method === "GET" && url.pathname === "/api/candles") {
       const symbol=url.searchParams.get("symbol") || "BTCUSDT";
