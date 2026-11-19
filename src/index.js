@@ -181,6 +181,7 @@ async function handle(update, env) {
 }
 async function scheduled(env) {
   if (!env.SUBSCRIBERS) return;
+  await settleTradingDemos(env);
   const list = await env.SUBSCRIBERS.list({prefix:"chat:",limit:1000});
   if (!list.keys.length) return;
   let data;
