@@ -397,7 +397,20 @@ export default {
         const r=await fetch("https://api.binance.com/api/v3/klines?symbol="+symbol+"&interval="+interval+"&limit=60",{signal:AbortSignal.timeout(9000)});
         if(!r.ok) throw new Error("Binance candles HTTP "+r.status);
         return Response.json(await r.json(),{headers:{"cache-control":"no-store"}});
-      } catch(e) { return Response.json({error:e.message},{status:502}); }
+      } catch(binanceError) {
+        try {
+          const krakenInterval={"1m":1,"5m":5,"15m":15,"30m":30,"1h":60,"4h":240}[interval];
+          const krakenPair=symbol.replace("BTC","XBT");
+          const response=await fetch("https://api.kraken.com/0/public/OHLC?pair="+krakenPair+"&interval="+krakenInterval,{signal:AbortSignal.timeout(9000)});
+          if(!response.ok) throw new Error("Kraken OHLC HTTP "+response.status);
+          const payload=await response.json();
+          if(payload.error?.length) throw new Error(payload.error.join(", "));
+          const rows=Object.entries(payload.result||{}).find(([key])=>key!=="last")?.[1]||[];
+          if(!rows.length) throw new Error("Kraken не вернул свечи для "+symbol);
+          const candles=rows.map(x=>{const start=Number(x[0])*1000;return [start,x[1],x[2],x[3],x[4],x[6],start+krakenInterval*60000-1]});
+          return Response.json(candles,{headers:{"cache-control":"no-store","x-market-source":"Kraken"}});
+        } catch(krakenError) { return Response.json({error:"Binance: "+binanceError.message+"; Kraken: "+krakenError.message},{status:502}); }
+      }
     }
     // Register Telegram's webhook without exposing bot credentials.
     if (request.method === "GET" && env.WEBHOOK_PATH_SECRET && url.pathname === "/setup/" + env.WEBHOOK_PATH_SECRET) {
