@@ -1,0 +1,10 @@
+name = "amore-arbitrage"
+main = "src/index.js"
+compatibility_date = "2026-11-19"
+
+[triggers]
+crons = ["* * * * *"]
+
+[[kv_namespaces]]
+binding = "SUBSCRIBERS"
+id = "2cdb027c62064080b9f5f2ba422ac11a"
