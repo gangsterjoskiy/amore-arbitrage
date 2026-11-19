@@ -162,7 +162,14 @@ async function handle(update, env) {
   if (!chatId) return;
   if (cb) await tg(env, "answerCallbackQuery", {callback_query_id:cb.id});
   const command = (msg?.text || "").trim().split(/\s+/)[0].toLowerCase();
-  const action = cb?.data;
+  let webAction;
+  if (msg?.web_app_data?.data) {
+    try {
+      const payload = JSON.parse(msg.web_app_data.data);
+      if (payload.action === "signal_analysis" && ["1m","5m","15m","30m","auto"].includes(payload.timeframe)) webAction = "trade:" + payload.timeframe;
+    } catch {}
+  }
+  const action = cb?.data || webAction;
   if (command === "/demo" || action === "demo") {
     try {
       const account = await getDemoAccount(env, chatId);
