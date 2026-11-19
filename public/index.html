@@ -118,7 +118,7 @@ $('dealsBtn').addEventListener('click',function(){botStart('demo')});
 $('openDemo').addEventListener('click',function(){botStart('demo')});
 $('openStats').addEventListener('click',function(){botStart('stats')});
 $('runSignal').addEventListener('click',function(){const payload='signals_'+signalTf+'_'+signalPair;$('signalResult').textContent='Передаём выбранную пару и таймфрейм в Telegram-бот…';botStart(payload)});
-$('stopBtn').addEventListener('click',function(){paused=!paused;this.textContent=paused?'RESUME':'STOP';this.className=paused?'primary':'danger';if(paused){setStatus('offline','PAUSED');$('scanNote').textContent='Автообновление терминала приостановлено. Нажми RESUME, чтобы продолжить.'}else{loadDashboard()}});
+$('stopBtn').addEventListener('click',function(){const resume=this.dataset.resume==='1';if(resume){botStart('resume');this.dataset.resume='0';this.textContent='STOP';this.className='danger';$('scanNote').textContent='Отправлен запрос на возобновление. Подтверди действие в Telegram-боте.'}else{botStart('stop');this.dataset.resume='1';this.textContent='RESUME';this.className='primary';$('scanNote').textContent='STOP отправлен. Подтверди команду в Telegram-боте: новые демо-прогнозы и уведомления будут остановлены.'}});
 loadDashboard();setInterval(loadDashboard,30000);window.addEventListener('resize',function(){if($('markets').classList.contains('active'))loadCandles()});
 })();
 </script>
