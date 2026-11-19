@@ -48,6 +48,34 @@ async function candles(symbol, interval) {
     }
   }
 }
+async function currentPrice(symbol) {
+  try {
+    const response=await fetch("https://api.binance.com/api/v3/ticker/price?symbol="+symbol,{signal:AbortSignal.timeout(7000)});
+    if(!response.ok)throw new Error("Binance ticker HTTP "+response.status);
+    const data=await response.json(),price=Number(data.price);
+    if(Number.isFinite(price)&&price>0)return price;
+    throw new Error("Некорректная цена Binance");
+  } catch(binanceError) {
+    const pair=symbol.replace("BTC","XBT");
+    try {
+      const response=await fetch("https://api.kraken.com/0/public/Ticker?pair="+pair,{signal:AbortSignal.timeout(7000)});
+      if(!response.ok)throw new Error("Kraken ticker HTTP "+response.status);
+      const data=await response.json();
+      if(data.error?.length)throw new Error(data.error.join(", "));
+      const row=Object.entries(data.result||{}).find(([key])=>key!=="last")?.[1];
+      const price=Number(row?.c?.[0]);
+      if(Number.isFinite(price)&&price>0)return price;
+      throw new Error("Kraken не вернул цену");
+    } catch(krakenError) {
+      const instrument=symbol.replace("USDT","-USDT");
+      const response=await fetch("https://www.okx.com/api/v5/market/ticker?instId="+instrument,{signal:AbortSignal.timeout(7000)});
+      if(!response.ok)throw new Error("Binance: "+binanceError.message+"; Kraken: "+krakenError.message+"; OKX ticker HTTP "+response.status);
+      const data=await response.json(),price=Number(data.data?.[0]?.last);
+      if(data.code!=="0"||!Number.isFinite(price)||price<=0)throw new Error("Binance: "+binanceError.message+"; Kraken: "+krakenError.message+"; OKX: "+(data.msg||"нет цены"));
+      return price;
+    }
+  }
+}
 function ema(values, period) {
   const k=2/(period+1); let result=values[0];
   for(let i=1;i<values.length;i++) result=values[i]*k+result*(1-k);
