@@ -206,7 +206,8 @@ function analyze(rows) {
 export async function openTradingDemo(env,chatId,requestedTimeframe="auto",requestedPair="ALL") {
   if(!env.SUBSCRIBERS)throw new Error("KV namespace SUBSCRIBERS is not configured");
   if(await env.SUBSCRIBERS.get("user:stop:"+chatId))throw new Error("A|MORE STOP включён. Возобнови работу кнопкой в Telegram-боте.");
-  // Каждый запрос создаёт отдельный прогноз. Уже открытые прогнозы не блокируют новые.\n  const account=await getDemoAccount(env,chatId);
+  // Каждый запрос создаёт отдельный прогноз. Уже открытые прогнозы не блокируют новые.
+  const account=await getDemoAccount(env,chatId);
   if(account.trading.balance<TRADE_STAKE)throw new Error("На демо-балансе A|MORE Signals недостаточно средств.");
   const intervals=requestedTimeframe==="auto"?Object.keys(TIMEFRAMES):[requestedTimeframe];
   if(!TIMEFRAMES[requestedTimeframe]&&requestedTimeframe!=="auto")throw new Error("Неизвестный таймфрейм.");
