@@ -73,12 +73,17 @@ export async function openTradingDemo(env, chatId) {
   candidates.sort((a, b) => b.score - a.score);
   const best = candidates[0];
   if (!best) return { none: true, errors };
+  const tickerResponse = await fetch("https://api.binance.com/api/v3/ticker/price?symbol=" + best.symbol, { signal: AbortSignal.timeout(7000) });
+  if (!tickerResponse.ok) throw new Error("Не удалось получить цену входа для " + best.symbol);
+  const ticker = await tickerResponse.json();
+  const entry = Number(ticker.price);
+  if (!Number.isFinite(entry) || entry <= 0) throw new Error("Некорректная цена входа");
   const now = Date.now();
   const trade = {
     id: String(chatId) + ":" + now,
     symbol: best.symbol,
     direction: best.direction,
-    entry: best.entry,
+    entry,
     stake: TRADE_STAKE,
     payout: PAYOUT,
     openedAt: now,
