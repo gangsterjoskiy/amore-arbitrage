@@ -198,6 +198,26 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") return Response.json({ok:true,service:"A|More Arbitrage",version:"0.1.0"});
+    // Register Telegram's webhook without exposing bot credentials.
+    if (request.method === "GET" && env.WEBHOOK_PATH_SECRET && url.pathname === "/setup/" + env.WEBHOOK_PATH_SECRET) {
+      if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_WEBHOOK_SECRET) {
+        return Response.json({ok:false,error:"Missing Telegram secrets"}, {status:500});
+      }
+      const webhookUrl = url.origin + "/telegram/" + env.WEBHOOK_PATH_SECRET;
+      const response = await fetch("https://api.telegram.org/bot" + env.TELEGRAM_BOT_TOKEN + "/setWebhook", {
+        method:"POST",
+        headers:{"content-type":"application/json"},
+        body:JSON.stringify({
+          url:webhookUrl,
+          secret_token:env.TELEGRAM_WEBHOOK_SECRET,
+          allowed_updates:["message","callback_query"],
+          drop_pending_updates:false
+        })
+      });
+      const result = await response.json();
+      const ok = response.ok && result.ok === true;
+      return Response.json({ok,telegram:result.description || (ok ? "Webhook registered" : "Registration failed")}, {status:ok ? 200 : 502});
+    }
     if (request.method !== "POST" || !env.WEBHOOK_PATH_SECRET || url.pathname !== "/telegram/" + env.WEBHOOK_PATH_SECRET) return new Response("Not found",{status:404});
     if (!env.TELEGRAM_WEBHOOK_SECRET || request.headers.get("X-Telegram-Bot-Api-Secret-Token") !== env.TELEGRAM_WEBHOOK_SECRET) return new Response("Unauthorized",{status:401});
     let update;
