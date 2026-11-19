@@ -11,4 +11,4 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: node --check src/index.js
+      - run: node --check src/index.js\n      - run: node --check src/demo.js
