@@ -3,6 +3,7 @@ import { getDemoAccount, applyDemoResult } from "./demo.js";
 const TRADE_STAKE = 10;
 const PAYOUT = 0.8;
 const PAIRS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"];
+function mskTime(timestamp) { return new Intl.DateTimeFormat("ru-RU", {timeZone:"Europe/Moscow",hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"}).format(new Date(timestamp)); }
 export const TIMEFRAMES = {
   "1m": { label: "1 минута", expiryMs: 60000, rank: 1 },
   "5m": { label: "5 минут", expiryMs: 300000, rank: 2 },
@@ -187,7 +188,7 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
   if(!best)return {none:true,errors,diagnostics,requestedTimeframe};
   const entry=await currentPrice(best.symbol);
   const now=Date.now(),duration=TIMEFRAMES[best.timeframe].expiryMs;
-  const trade={id:String(chatId)+":"+now,symbol:best.symbol,timeframe:best.timeframe,direction:best.direction,entry,stake:TRADE_STAKE,payout:PAYOUT,openedAt:now,settleAt:now+duration,expiryMs:duration,reasons:best.reasons,score:best.score};
+  const trade={id:String(chatId)+":"+now,symbol:best.symbol,timeframe:best.timeframe,direction:best.direction,entry,stake:TRADE_STAKE,payout:PAYOUT,openedAt:now,entryAt:now,entryTimeMsk:mskTime(now),settleAt:now+duration,expiryMs:duration,reasons:best.reasons,score:best.score};
   await env.SUBSCRIBERS.put(key,JSON.stringify(trade),{expirationTtl:Math.ceil(duration/1000)+300});
   return {trade};
 }
@@ -202,7 +203,7 @@ export async function settleTradingDemos(env) {
       const exit=await currentPrice(trade.symbol);if(!Number.isFinite(exit)||exit<=0)continue;
       const outcome=exit===trade.entry?"draw":(trade.direction==="UP"?exit>trade.entry:exit<trade.entry)?"win":"loss";
       const pnl=outcome==="win"?trade.stake*trade.payout:outcome==="loss"?-trade.stake:0;
-      await applyDemoResult(env,item.name.slice("paper:trading:".length),"trading",pnl,outcome,{type:"signal",symbol:trade.symbol,timeframe:trade.timeframe,direction:trade.direction,entry:trade.entry,exit,stake:trade.stake,score:trade.score});
+      await applyDemoResult(env,item.name.slice("paper:trading:".length),"trading",pnl,outcome,{type:"signal",symbol:trade.symbol,timeframe:trade.timeframe,direction:trade.direction,entry:trade.entry,exit,stake:trade.stake,score:trade.score,entryAt:trade.entryAt,entryTimeMsk:trade.entryTimeMsk});
       await env.SUBSCRIBERS.delete(item.name);
       const label=outcome==="win"?"✅ ПРОГНОЗ СБЫЛСЯ":outcome==="loss"?"❌ ПРОГНОЗ НЕ СБЫЛСЯ":"➖ НИЧЬЯ";
       const text="⏱ <b>A|MORE Signals — результат демо-прогноза</b>\n"+label+"\nПара: <b>"+trade.symbol+"</b>\nТаймфрейм: <b>"+(trade.timeframe||"1m")+"</b>\nПрогноз: <b>"+trade.direction+"</b>\nВход: "+trade.entry+"\nЦена после экспирации: "+exit+"\nP/L: <b>"+(pnl>0?"+":"")+pnl.toFixed(2)+" USDT</b>\n<i>Демо-модель. Это не исполнение у брокера.</i>";
@@ -212,5 +213,5 @@ export async function settleTradingDemos(env) {
 }
 export function formatOpenTrade(trade) {
   const tf=trade.timeframe||"1m";
-  return "📈 <b>A|MORE SIGNALS — ДЕМО-ПРОГНОЗ</b>\nПара: <b>"+trade.symbol+"</b>\nТаймфрейм: <b>"+tf+" ("+TIMEFRAMES[tf].label+")</b>\nПрогноз: <b>"+(trade.direction==="UP"?"🟢 ВВЕРХ ↑":"🔴 ВНИЗ ↓")+"</b>\nВиртуальная ставка: <b>"+trade.stake+" USDT</b>\nЦена входа: <b>"+trade.entry+"</b>\nЭкспирация: <b>"+TIMEFRAMES[tf].label+"</b>\nФакторы: "+trade.reasons.join("; ")+"\nОценка модели: "+trade.score+"/4 подтверждений\n\n<i>Экспериментальная стратегия. Точность не подтверждена статистически.</i>";
+  return "📈 <b>A|MORE SIGNALS — ДЕМО-ПРОГНОЗ</b>\n\n"+(trade.direction==="UP"?"🟢 <b>НАПРАВЛЕНИЕ: ВВЕРХ ↑</b>":"🔴 <b>НАПРАВЛЕНИЕ: ВНИЗ ↓</b>")+"\n\n<b>ВРЕМЯ ВХОДА: "+(trade.entryTimeMsk||mskTime(trade.entryAt||trade.openedAt))+" МСК</b>\nПара: <b>"+trade.symbol+"</b>\nТаймфрейм: <b>"+tf+" ("+TIMEFRAMES[tf].label+")</b>\nЦена на момент сигнала: <b>"+trade.entry+"</b>\nВиртуальная ставка: <b>"+trade.stake+" USDT</b>\nЭкспирация: <b>"+TIMEFRAMES[tf].label+"</b>\nОжидаемое закрытие: <b>"+mskTime(trade.settleAt)+" МСК</b>\n\n<b>Подтверждения модели:</b> "+trade.score+"/4\nФакторы: "+trade.reasons.join("; ")+"\n\n<i>Время указано по Москве. Экспериментальный прогноз, точность не подтверждена статистически.</i>";
 }
