@@ -99,7 +99,7 @@ async function tg(env, method, body) {
   if (!r.ok || !data.ok) throw new Error(data.description || "Telegram API error");
   return data.result;
 }
-const keyboard = { inline_keyboard: [
+const keyboard = { inline_keyboard: [\n  [{text:"◈ Открыть A|MORE Terminal",web_app:{url:"https://amore-arbitrage.hn29wknr7h.workers.dev/app/"}}],
   [{text:"📊 A|MORE Arbitrage — сканировать",callback_data:"scan"}],
   [{text:"📈 A|MORE Signals — выбрать таймфрейм",callback_data:"trade_menu"}],
   [{text:"💼 Демо-балансы",callback_data:"demo"},{text:"🧾 Статистика",callback_data:"stats"}],
@@ -145,6 +145,15 @@ async function runScan(env, chatId) {
   await send(env, chatId, "⏳ Получаю котировки Binance, Bybit и OKX…");
   try { const data = await scan(env); await send(env, chatId, report(data, env), {reply_markup:keyboard}); }
   catch (e) { await send(env, chatId, "⚠️ Сканирование не завершено: " + html(e.message), {reply_markup:keyboard}); }
+}
+async function dashboard(env) {
+  const data = await scan(env);
+  const response = await fetch("https://api.binance.com/api/v3/ticker/24hr", { signal: AbortSignal.timeout(9000) });
+  if (!response.ok) throw new Error("Binance 24h HTTP " + response.status);
+  const rows = await response.json();
+  const wanted = new Set(["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"]);
+  const tickers = rows.filter(x => wanted.has(x.symbol)).map(x => ({symbol:x.symbol,price:Number(x.lastPrice),change:Number(x.priceChangePercent)}));
+  return {...data,tickers};
 }
 async function handle(update, env) {
   const msg = update.message, cb = update.callback_query;
@@ -231,6 +240,23 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") return Response.json({ok:true,service:"A|More Arbitrage",version:"0.1.0"});
+    if (request.method === "GET" && url.pathname === "/app") return Response.redirect(url.origin + "/app/", 302);
+    if (request.method === "GET" && url.pathname === "/api/dashboard") {
+      try { return Response.json(await dashboard(env), {headers:{"cache-control":"no-store","access-control-allow-origin":"*"}}); }
+      catch(e) { return Response.json({error:e.message},{status:502,headers:{"cache-control":"no-store"}}); }
+    }
+    if (request.method === "GET" && url.pathname === "/api/candles") {
+      const symbol=url.searchParams.get("symbol") || "BTCUSDT";
+      const interval=url.searchParams.get("interval") || "5m";
+      const allowedSymbols=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"];
+      const allowedIntervals=["1m","5m","15m","30m","1h","4h"];
+      if(!allowedSymbols.includes(symbol)||!allowedIntervals.includes(interval)) return Response.json({error:"Unsupported market or interval"},{status:400});
+      try {
+        const r=await fetch("https://api.binance.com/api/v3/klines?symbol="+symbol+"&interval="+interval+"&limit=60",{signal:AbortSignal.timeout(9000)});
+        if(!r.ok) throw new Error("Binance candles HTTP "+r.status);
+        return Response.json(await r.json(),{headers:{"cache-control":"no-store","access-control-allow-origin":"*"}});
+      } catch(e) { return Response.json({error:e.message},{status:502}); }
+    }
     // Register Telegram's webhook without exposing bot credentials.
     if (request.method === "GET" && env.WEBHOOK_PATH_SECRET && url.pathname === "/setup/" + env.WEBHOOK_PATH_SECRET) {
       if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_WEBHOOK_SECRET) {
