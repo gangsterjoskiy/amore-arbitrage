@@ -61,7 +61,7 @@ export function formatDemoAccount(account) {
   const line = (name, wallet, kind) => {
     const accuracy = wallet.trades ? ((wallet.wins / wallet.trades) * 100).toFixed(1) : "—";
     const stats = kind === "arbi"
-      ? "Расчётных возможностей: " + wallet.trades
+      ? "Модельных записей: " + wallet.trades
       : "Прогнозов: " + wallet.trades + " • ✅ " + wallet.wins + " • ❌ " + wallet.losses + " • ➖ " + wallet.draws;
     const accuracyLabel = kind === "arbi" ? "не оценивается по top-of-book" : accuracy === "—" ? "—" : accuracy + "%";
     const sign = wallet.pnl > 0 ? "+" : "";
@@ -69,10 +69,10 @@ export function formatDemoAccount(account) {
       "Баланс: <b>" + wallet.balance.toFixed(2) + " USDT</b>\n" +
       "P/L: <b>" + sign + wallet.pnl.toFixed(2) + " USDT</b>\n" +
       stats + "\n" +
-      "Точность: <b>" + accuracyLabel + "</b>";
+      "Доля успешных: <b>" + accuracyLabel + "</b>";
   };
   return "🧪 <b>A|MORE — ДЕМО-БАЛАНСЫ</b>\n\n" +
-    line("🟢 Арби", account.arbi, "arbi") + "\n\n" +
-    line("🔵 Трейдинг", account.trading, "trading") +
+    line("📊 A|MORE Arbitrage", account.arbi, "arbi") + "\n\n" +
+    line("📈 A|MORE Signals", account.trading, "trading") +
     "\n\n<i>Виртуальные средства. Реальные деньги и ордера не используются.</i>";
 }
