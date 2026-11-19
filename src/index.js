@@ -258,11 +258,11 @@ async function handle(update, env) {
   if (!chatId) return;
   if (cb) await tg(env, "answerCallbackQuery", {callback_query_id:cb.id});
   const command = (msg?.text || "").trim().split(/\s+/)[0].toLowerCase();
-  let webAction;
+  let webAction, webAssetType="forex";
   if (msg?.web_app_data?.data) {
     try {
       const payload = JSON.parse(msg.web_app_data.data);
-      if (payload.action === "signal_analysis" && ["1m","5m","15m","30m","auto"].includes(payload.timeframe)) webAction = "trade:" + payload.timeframe;
+      if (payload.action === "signal_analysis" && ["1m","3m","5m","auto"].includes(payload.timeframe)) { webAction = "trade:" + payload.timeframe + ":" + (payload.pair || "ALL"); webAssetType = payload.assetType || "forex"; }
     } catch {}
   }
   const startArg = command === "/start" ? (msg?.text || "").trim().split(/\s+/)[1] : null;
@@ -270,8 +270,8 @@ async function handle(update, env) {
     const parts = startArg.slice(8).split("_");
     const requested = parts[0];
     const pair = parts[1] || "ALL";
-    const allowedPairs = ["ALL","BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"];
-    if (["1m","5m","15m","30m","auto"].includes(requested) && allowedPairs.includes(pair)) webAction = "trade:" + requested + ":" + pair;
+    const allowedPairs = ["ALL","EURUSD","AUDCAD","AUDCHF","AUDJPY","AUDUSD","CADCHF","CADJPY","CHFJPY","EURAUD","EURCAD","EURCHF","EURGBP","EURJPY","GBPAUD","GBPCAD","GBPCHF","GBPJPY","GBPUSD","USDCAD","USDCHF","USDJPY","BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"];
+    if (["1m","3m","5m","auto"].includes(requested) && allowedPairs.includes(pair)) webAction = "trade:" + requested + ":" + pair;
   }
   if (!webAction && ["stop","resume","demo","stats","scan","help","demo_reset","arbi_demo"].includes(startArg)) webAction = startArg;
   const action = cb?.data || webAction;
@@ -301,22 +301,22 @@ async function handle(update, env) {
     const pct = w => (w.wins + w.losses) ? (w.wins / (w.wins + w.losses) * 100).toFixed(1) + "%" : "пока нет данных";
     await send(env, chatId, "📊 <b>A|MORE — СТАТИСТИКА ДЕМО</b>\n\n<b>A|MORE Arbitrage</b>\nРасчётных сделок: " + a.trades + "\nМодельный P/L: " + (a.pnl > 0 ? "+" : "") + a.pnl.toFixed(2) + " USDT\n\n<b>A|MORE Signals</b>\nПрогнозов: " + t.trades + "\nУспешных: " + t.wins + " • Неуспешных: " + t.losses + " • Ничьих: " + t.draws + "\nДоля успешных: " + pct(t) + "\nP/L: " + (t.pnl > 0 ? "+" : "") + t.pnl.toFixed(2) + " USDT\n\n<i>Статистика демо-модели. Маленькая выборка не доказывает наличие преимущества.</i>");
   } else if (action === "trade_menu") {
-    await send(env, chatId, "📈 <b>A|MORE Signals</b>\nВыбери период свечей. В режиме «Авто» бот проверит все четыре таймфрейма и выберет самый сильный доступный сигнал.", {reply_markup:{inline_keyboard:[[{text:"⚡ M1 · 1 мин",callback_data:"trade:1m"},{text:"🎯 M5 · 5 мин",callback_data:"trade:5m"}],[{text:"🕒 M15 · 15 мин",callback_data:"trade:15m"},{text:"📊 M30 · 30 мин",callback_data:"trade:30m"}],[{text:"🤖 Авто · все периоды",callback_data:"trade:auto"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]}});
+    await send(env, chatId, "📈 <b>A|MORE Signals</b>\nВыбери период свечей. В режиме «Авто» бот проверит M1/M3/M5 и потребует совпадения минимум двух периодов.", {reply_markup:{inline_keyboard:[[{text:"⚡ M1 · 1 мин",callback_data:"trade:1m"},{text:"🎯 M5 · 5 мин",callback_data:"trade:3m"},{text:"🎯 M5 · 5 мин",callback_data:"trade:5m"}],[{text:"🤖 Авто · все периоды",callback_data:"trade:auto"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]}});
   } else if (command === "/trade" || action === "trade" || action?.startsWith("trade:")) {
     const tradeParts = action?.startsWith("trade:") ? action.slice(6).split(":") : ["auto","ALL"];
     const timeframe = tradeParts[0] || "auto";
     const pair = tradeParts[1] || "ALL";
-    const pairLabel = pair === "ALL" ? "все пары BTC, ETH, SOL, BNB и XRP" : pair;
-    const label = (timeframe === "auto" ? "все таймфреймы M1/M5/M15/M30" : timeframe + " (" + TIMEFRAMES[timeframe].label + ")") + " • " + pairLabel;
+    const assetType = webAssetType || "forex";
+    const pairLabel = pair === "ALL" ? (assetType === "crypto" ? "вся криптовалюта" : assetType === "stocks" ? "все акции" : "все валютные пары Forex") : pair;
+    const label = (timeframe === "auto" ? "все таймфреймы M1/M3/M5" : timeframe + " (" + TIMEFRAMES[timeframe].label + ")") + " • " + pairLabel;
     await send(env, chatId, "🔎 Анализирую закрытые свечи: " + label + "…");
     try {
       if (await env.SUBSCRIBERS.get("user:stop:" + chatId)) throw new Error("A|MORE STOP включён. Возобнови работу кнопкой RESUME.");
-      const assetType = body.assetType || "forex";
-        const result = await openTradingDemo(env, chatId, timeframe, pair, assetType);
+      const result = await openTradingDemo(env, chatId, timeframe, pair, assetType);
       if (result.none) {
         const diag = (result.diagnostics || []).map(x => "<b>" + html(x.symbol) + " · " + html(x.timeframe) + "</b>: EMA " + html(x.ema) + ", RSI " + x.rsi + ", свеча " + html(x.candle) + ", ADX " + (x.adx ?? "—") + ", подтверждения " + x.score + "/6" + (x.rejection ? " · " + html(x.rejection) : "")).join("\n");
         const errors = result.errors?.length ? "\n\n⚠️ Ошибки данных:\n" + html(result.errors.join("\n")) : "";
-        await send(env, chatId, "⏸ <b>A|MORE Signals: подтверждённого сигнала пока нет.</b>\nПроверены: " + label + ". Фильтры не ослаблялись. Диагностика:\n\n" + (diag || "Недостаточно данных для анализа.") + errors + "\n\nМожно выбрать другой период или режим «Авто». Сигналы не генерируются искусственно.", {reply_markup:{inline_keyboard:[[{text:"⚡ M1",callback_data:"trade:1m"},{text:"🎯 M5",callback_data:"trade:5m"},{text:"🕒 M15",callback_data:"trade:15m"},{text:"📊 M30",callback_data:"trade:30m"}],[{text:"🤖 Проверить все периоды",callback_data:"trade:auto"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]}});
+        await send(env, chatId, "⏸ <b>A|MORE Signals: подтверждённого сигнала пока нет.</b>\nПроверены: " + label + ". Фильтры не ослаблялись. Диагностика:\n\n" + (diag || "Недостаточно данных для анализа.") + errors + "\n\nМожно выбрать другой период или режим «Авто». Сигналы не генерируются искусственно.", {reply_markup:{inline_keyboard:[[{text:"⚡ M1",callback_data:"trade:1m"},{text:"🎯 M3",callback_data:"trade:3m"},{text:"📊 M5",callback_data:"trade:5m"}],[{text:"🤖 Проверить все периоды",callback_data:"trade:auto"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]}});
       } else await send(env, chatId, formatOpenTrade(result.trade), {reply_markup:{inline_keyboard:[[{text:"🔄 Новый анализ",callback_data:"trade_menu"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]}});
     } catch (e) { await send(env, chatId, "⚠️ Не удалось открыть демо-прогноз: " + html(e.message)); }
   } else if (command === "/arbi_demo" || action === "arbi_demo") {
