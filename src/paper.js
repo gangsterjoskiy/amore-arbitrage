@@ -202,8 +202,19 @@ function analyze(rows) {
 export async function openTradingDemo(env,chatId,requestedTimeframe="auto",requestedPair="ALL") {
   if(!env.SUBSCRIBERS)throw new Error("KV namespace SUBSCRIBERS is not configured");
   if(await env.SUBSCRIBERS.get("user:stop:"+chatId))throw new Error("A|MORE STOP включён. Возобнови работу кнопкой в Telegram-боте.");
-  const key="paper:trading:"+chatId,active=await env.SUBSCRIBERS.get(key);
-  if(active)return {active:JSON.parse(active)};
+  const key="paper:trading:"+chatId;
+  let activeRaw=await env.SUBSCRIBERS.get(key);
+  if(activeRaw){
+    let active;
+    try{active=JSON.parse(activeRaw);}catch{await env.SUBSCRIBERS.delete(key);}
+    if(active){
+      if(Date.now()<Number(active.settleAt))return {active,remainingMs:Number(active.settleAt)-Date.now()};
+      // The expiry time has passed. Settle the old demo forecast before allowing a new one.
+      await settleTradingDemos(env);
+      activeRaw=await env.SUBSCRIBERS.get(key);
+      if(activeRaw)throw new Error("Срок прошлого прогноза истёк, но его результат пока не удалось рассчитать. Повтори позже — новый прогноз не будет подменять старый.");
+    }
+  }
   const account=await getDemoAccount(env,chatId);
   if(account.trading.balance<TRADE_STAKE)throw new Error("На демо-балансе A|MORE Signals недостаточно средств.");
   const intervals=requestedTimeframe==="auto"?Object.keys(TIMEFRAMES):[requestedTimeframe];
@@ -211,7 +222,17 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
   if(requestedPair!=="ALL"&&!PAIRS.includes(requestedPair)&&!STOCKS.includes(requestedPair))throw new Error("Неизвестный актив.");
   const selectedPairs=requestedPair==="ALL"?PAIRS:[requestedPair];
   const tasks=[];for(const interval of intervals)for(const symbol of selectedPairs)tasks.push({interval,symbol});
-  const results=await Promise.all(tasks.map(async task=>{try{return {...task,signal:analyze(await candles(task.symbol,task.interval))};}catch(e){return {...task,error:task.symbol+" "+task.interval+": "+e.message};}}));
+  const results=await Promise.all(tasks.map(async task=>{try{
+    const rows=await candles(task.symbol,task.interval);
+    const signal=analyze(rows);
+    if(signal.candleCloseTime){
+      const intervalMs=TIMEFRAMES[task.interval].expiryMs;
+      const age=Date.now()-signal.candleCloseTime;
+      if(age>intervalMs+90000)throw new Error("устаревшие свечи: последняя закрытая свеча старше допустимого интервала");
+      if(age< -30000)throw new Error("время свечи из будущего — источник данных отклонён");
+    }
+    return {...task,signal};
+  }catch(e){return {...task,error:task.symbol+" "+task.interval+": "+e.message};}}));
   const candidates=results.filter(x=>x.signal?.direction).map(x=>({symbol:x.symbol,timeframe:x.interval,...x.signal}));
   candidates.sort((a,b)=>b.score-a.score||TIMEFRAMES[b.timeframe].rank-TIMEFRAMES[a.timeframe].rank);
   const diagnostics=results.filter(x=>x.signal).map(x=>({symbol:x.symbol,timeframe:x.interval,...x.signal.diagnostics}));
