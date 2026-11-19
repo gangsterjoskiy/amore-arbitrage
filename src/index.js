@@ -301,18 +301,19 @@ async function handle(update, env) {
     const pct = w => (w.wins + w.losses) ? (w.wins / (w.wins + w.losses) * 100).toFixed(1) + "%" : "пока нет данных";
     await send(env, chatId, "📊 <b>A|MORE — СТАТИСТИКА ДЕМО</b>\n\n<b>A|MORE Arbitrage</b>\nРасчётных сделок: " + a.trades + "\nМодельный P/L: " + (a.pnl > 0 ? "+" : "") + a.pnl.toFixed(2) + " USDT\n\n<b>A|MORE Signals</b>\nПрогнозов: " + t.trades + "\nУспешных: " + t.wins + " • Неуспешных: " + t.losses + " • Ничьих: " + t.draws + "\nДоля успешных: " + pct(t) + "\nP/L: " + (t.pnl > 0 ? "+" : "") + t.pnl.toFixed(2) + " USDT\n\n<i>Статистика демо-модели. Маленькая выборка не доказывает наличие преимущества.</i>");
   } else if (action === "trade_menu") {
-    await send(env, chatId, "📈 <b>A|MORE Signals</b>\nВыбери период свечей. В режиме «Авто» бот проверит M1/M3/M5 и потребует совпадения минимум двух периодов.", {reply_markup:{inline_keyboard:[[{text:"⚡ M1 · 1 мин",callback_data:"trade:1m"},{text:"🎯 M3 · 3 мин",callback_data:"trade:3m"},{text:"🎯 M5 · 5 мин",callback_data:"trade:5m"}],[{text:"🤖 Авто · все периоды",callback_data:"trade:auto"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]}});
+    await send(env, chatId, "📈 <b>A|MORE Signals</b>\nВыбери период свечей. В режиме «Авто» бот проверит M1/M3/M5 и потребует совпадения минимум двух периодов.", {reply_markup:{inline_keyboard:[[{text:"⚡ ATM · быстрый прогноз",callback_data:"trade:atm"}],[{text:"⚡ M1 · 1 мин",callback_data:"trade:1m"},{text:"🎯 M3 · 3 мин",callback_data:"trade:3m"},{text:"🎯 M5 · 5 мин",callback_data:"trade:5m"}],[{text:"🤖 Авто · все периоды",callback_data:"trade:auto"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]}});
   } else if (command === "/trade" || action === "trade" || action?.startsWith("trade:")) {
     const tradeParts = action?.startsWith("trade:") ? action.slice(6).split(":") : ["auto","ALL"];
-    const timeframe = tradeParts[0] || "auto";
-    const pair = tradeParts[1] || "ALL";
+    const atmMode = tradeParts[0] === "atm";
+    const timeframe = atmMode ? "auto" : (tradeParts[0] || "auto");
+    const pair = (atmMode ? tradeParts[1] : tradeParts[1]) || "ALL";
     const assetType = webAssetType || "forex";
     const pairLabel = pair === "ALL" ? (assetType === "crypto" ? "вся криптовалюта" : assetType === "stocks" ? "все акции" : "все валютные пары Forex") : pair;
-    const label = (timeframe === "auto" ? "все таймфреймы M1/M3/M5" : timeframe + " (" + TIMEFRAMES[timeframe].label + ")") + " • " + pairLabel;
-    await send(env, chatId, "🔎 Анализирую закрытые свечи: " + label + "…");
+    const label = (atmMode ? "ATM · быстрый снимок M1" : timeframe === "auto" ? "все таймфреймы M1/M3/M5" : timeframe + " (" + TIMEFRAMES[timeframe].label + ")") + " • " + pairLabel;
+    await send(env, chatId, "🔎 Анализирую текущую картину: " + label + "…");
     try {
       if (await env.SUBSCRIBERS.get("user:stop:" + chatId)) throw new Error("A|MORE STOP включён. Возобнови работу кнопкой RESUME.");
-      const result = await openTradingDemo(env, chatId, timeframe, pair, assetType);
+      const result = await openTradingDemo(env, chatId, timeframe, pair, assetType, atmMode ? "atm" : "strict");
       if (result.none) {
         const diag = (result.diagnostics || []).map(x => "<b>" + html(x.symbol) + " · " + html(x.timeframe) + "</b>: EMA " + html(x.ema) + ", RSI " + x.rsi + ", свеча " + html(x.candle) + ", ADX " + (x.adx ?? "—") + ", подтверждения " + x.score + "/6" + (x.rejection ? " · " + html(x.rejection) : "")).join("\n");
         const errors = result.errors?.length ? "\n\n⚠️ Ошибки данных:\n" + html(result.errors.join("\n")) : "";
@@ -397,7 +398,7 @@ export default {
         const body = await request.json();
         const timeframe = body.timeframe || "auto";
         const pair = body.pair || "ALL";
-        const result = await openTradingDemo(env, chatId, timeframe, pair, body.assetType || "forex");
+        const result = await openTradingDemo(env, chatId, timeframe, pair, body.assetType || "forex", body.mode === "atm" ? "atm" : "strict");
         if (result.trade) await send(env, chatId, formatOpenTrade(result.trade));
         return Response.json(result,{headers:{"cache-control":"no-store"}});
       } catch(e) { return Response.json({error:e.message},{status:400,headers:{"cache-control":"no-store"}}); }
