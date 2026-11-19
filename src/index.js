@@ -75,8 +75,8 @@ async function scan(env) {
       const gross = (sell.bid / buy.ask - 1) * 100;
       const net = (sell.bid * (1 - sellFee / 100) / (buy.ask * (1 + buyFee / 100)) - 1) * 100;
       const candidate = {symbol,buyExchange:buyVenue.exchange.id,sellExchange:sellVenue.exchange.id,buy:buy.ask,sell:sell.bid,gross,net,depth,buyFee,sellFee};
-      if (Number.isFinite(net)) rawBest.push(candidate);
       if (!Number.isFinite(depth) || depth < minDepth) { depthRejected++; continue; }
+      if (Number.isFinite(net)) rawBest.push(candidate);
       if (Number.isFinite(net) && net >= minNet) found.push({
         symbol, buyExchange: buyVenue.exchange.id, sellExchange: sellVenue.exchange.id,
         buy: buy.ask, sell: sell.bid, gross, net, depth, buyFee, sellFee
@@ -120,14 +120,14 @@ function report(data, env) {
   out += "Биржи онлайн: <b>" + html(data.exchanges.join(", ")) + "</b>\nПорог net: <b>" + threshold.toFixed(2) + "%</b>\n\n";
   if (!data.opportunities.length) {
     const d = data.diagnostics || {};
-    out += "Пока нет возможностей выше порога. Бот не будет придумывать сигналы.\\n\\n";
-    out += "Совпадающих пар между биржами: <b>" + (d.sharedPairs ?? 0) + "</b>\\n";
-    out += "Отсеяно по глубине стакана: <b>" + (d.depthRejected ?? 0) + "</b> (минимум ~$" + (d.minDepth ?? minDepthFallback(env)) + ")\\n";
+    out += "Пока нет возможностей выше порога. Бот не будет придумывать сигналы.\n\n";
+    out += "Совпадающих пар между биржами: <b>" + (d.sharedPairs ?? 0) + "</b>\n";
+    out += "Отсеяно по глубине стакана: <b>" + (d.depthRejected ?? 0) + "</b> (минимум ~$" + (d.minDepth ?? minDepthFallback(env)) + ")\n";
     if (d.bestBeforeThreshold) {
       const b=d.bestBeforeThreshold;
-      out += "Лучший net до фильтра: <b>" + b.net.toFixed(3) + "%</b> — " + html(b.symbol) + " (" + html(b.buyExchange) + " → " + html(b.sellExchange) + ")\\n";
-      out += "До заданного порога не хватает " + Math.max(0,d.minNet-b.net).toFixed(3) + " п.п.\\n";
-    } else out += "Не удалось получить пригодную общую пару с корректными котировками.\\n";
+      out += "Лучший net до фильтра: <b>" + b.net.toFixed(3) + "%</b> — " + html(b.symbol) + " (" + html(b.buyExchange) + " → " + html(b.sellExchange) + ")\n";
+      out += "До заданного порога не хватает " + Math.max(0,d.minNet-b.net).toFixed(3) + " п.п.\n";
+    } else out += "Не удалось получить пригодную общую пару с корректными котировками.\n";
   }
   for (let i = 0; i < data.opportunities.length; i++) {
     const x = data.opportunities[i];
