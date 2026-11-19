@@ -44,6 +44,7 @@ function analyze(rows) {
 }
 export async function openTradingDemo(env,chatId,requestedTimeframe="auto",requestedPair="ALL") {
   if(!env.SUBSCRIBERS)throw new Error("KV namespace SUBSCRIBERS is not configured");
+  if(await env.SUBSCRIBERS.get("user:stop:"+chatId))throw new Error("A|MORE STOP включён. Возобнови работу кнопкой в Telegram-боте.");
   const key="paper:trading:"+chatId,active=await env.SUBSCRIBERS.get(key);
   if(active)return {active:JSON.parse(active)};
   const account=await getDemoAccount(env,chatId);
