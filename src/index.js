@@ -1,5 +1,5 @@
 import { getDemoAccount, resetDemoAccount, formatDemoAccount, applyDemoResult } from "./demo.js";
-import { openTradingDemo, settleTradingDemos, formatOpenTrade } from "./paper.js";
+import { openTradingDemo, settleTradingDemos, formatOpenTrade, TIMEFRAMES } from "./paper.js";
 
 
 const EXCHANGES = [
@@ -101,7 +101,7 @@ async function tg(env, method, body) {
 }
 const keyboard = { inline_keyboard: [
   [{text:"📊 A|MORE Arbitrage — сканировать",callback_data:"scan"}],
-  [{text:"📈 A|MORE Signals — прогноз",callback_data:"trade"}],
+  [{text:"📈 A|MORE Signals — выбрать таймфрейм",callback_data:"trade_menu"}],
   [{text:"💼 Демо-балансы",callback_data:"demo"},{text:"🧾 Статистика",callback_data:"stats"}],
   [{text:"🔔 Уведомления: включить",callback_data:"subscribe"},{text:"🔕 выключить",callback_data:"unsubscribe"}],
   [{text:"🧪 Тестовая сделка",callback_data:"arbi_demo"}],
@@ -171,17 +171,20 @@ async function handle(update, env) {
     const a = account.arbi, t = account.trading;
     const pct = w => w.trades ? (w.wins / w.trades * 100).toFixed(1) + "%" : "пока нет данных";
     await send(env, chatId, "📊 <b>A|MORE — СТАТИСТИКА ДЕМО</b>\n\n<b>A|MORE Arbitrage</b>\nРасчётных сделок: " + a.trades + "\nМодельный P/L: " + (a.pnl > 0 ? "+" : "") + a.pnl.toFixed(2) + " USDT\n\n<b>A|MORE Signals</b>\nПрогнозов: " + t.trades + "\nУспешных: " + t.wins + " • Неуспешных: " + t.losses + " • Ничьих: " + t.draws + "\nДоля успешных: " + pct(t) + "\nP/L: " + (t.pnl > 0 ? "+" : "") + t.pnl.toFixed(2) + " USDT\n\n<i>Статистика демо-модели. Маленькая выборка не доказывает наличие преимущества.</i>");
-  } else if (command === "/trade" || action === "trade") {
-    await send(env, chatId, "🔎 Анализирую закрытые минутные свечи BTC, ETH, SOL, BNB и XRP…");
+  } else if (action === "trade_menu") {
+    await send(env, chatId, "📈 <b>A|MORE Signals</b>\nВыбери период свечей. В режиме «Авто» бот проверит все четыре таймфрейма и выберет самый сильный доступный сигнал.", {reply_markup:{inline_keyboard:[[{text:"⚡ M1 · 1 мин",callback_data:"trade:1m"},{text:"🎯 M5 · 5 мин",callback_data:"trade:5m"}],[{text:"🕒 M15 · 15 мин",callback_data:"trade:15m"},{text:"📊 M30 · 30 мин",callback_data:"trade:30m"}],[{text:"🤖 Авто · все периоды",callback_data:"trade:auto"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]}});
+  } else if (command === "/trade" || action === "trade" || action?.startsWith("trade:")) {
+    const timeframe = action?.startsWith("trade:") ? action.slice(6) : "auto";
+    const label = timeframe === "auto" ? "все таймфреймы M1/M5/M15/M30" : timeframe + " (" + TIMEFRAMES[timeframe].label + ")";
+    await send(env, chatId, "🔎 Анализирую закрытые свечи BTC, ETH, SOL, BNB и XRP: " + label + "…");
     try {
-      const result = await openTradingDemo(env, chatId);
+      const result = await openTradingDemo(env, chatId, timeframe);
       if (result.active) await send(env, chatId, "У тебя уже есть активный прогноз:\n\n" + formatOpenTrade(result.active));
       else if (result.none) {
-        const diag = (result.diagnostics || []).map(x => "<b>" + html(x.symbol) + "</b>: EMA " + html(x.ema) + ", RSI " + x.rsi + ", свеча " + html(x.candle) + ", подтверждения " + x.score + "/3").join("\n");
+        const diag = (result.diagnostics || []).map(x => "<b>" + html(x.symbol) + " · " + html(x.timeframe) + "</b>: EMA " + html(x.ema) + ", RSI " + x.rsi + ", свеча " + html(x.candle) + ", подтверждения " + x.score + "/3").join("\n");
         const errors = result.errors?.length ? "\n\n⚠️ Ошибки данных:\n" + html(result.errors.join("\n")) : "";
-        await send(env, chatId, "⏸ <b>A|MORE Signals: подходящего сигнала пока нет.</b>\nФильтры не ослаблялись. Диагностика закрытых свечей:\n\n" + (diag || "Недостаточно данных для анализа.") + errors + "\n\n<i>EMA, RSI и направление последней закрытой свечи — фильтры стратегии, а не гарантия движения цены.</i>");
-      }
-      else await send(env, chatId, formatOpenTrade(result.trade));
+        await send(env, chatId, "⏸ <b>A|MORE Signals: подтверждённого сигнала пока нет.</b>\nПроверены: " + label + ". Фильтры не ослаблялись. Диагностика:\n\n" + (diag || "Недостаточно данных для анализа.") + errors + "\n\nМожно выбрать другой период или режим «Авто». Сигналы не генерируются искусственно.", {reply_markup:{inline_keyboard:[[{text:"⚡ M1",callback_data:"trade:1m"},{text:"🎯 M5",callback_data:"trade:5m"},{text:"🕒 M15",callback_data:"trade:15m"},{text:"📊 M30",callback_data:"trade:30m"}],[{text:"🤖 Проверить все периоды",callback_data:"trade:auto"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]}});
+      } else await send(env, chatId, formatOpenTrade(result.trade), {reply_markup:{inline_keyboard:[[{text:"🔄 Новый анализ",callback_data:"trade_menu"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]}});
     } catch (e) { await send(env, chatId, "⚠️ Не удалось открыть демо-прогноз: " + html(e.message)); }
   } else if (command === "/arbi_demo" || action === "arbi_demo") {
     await send(env, chatId, "🔎 A|MORE Arbitrage проверяет текущие межбиржевые котировки…");
