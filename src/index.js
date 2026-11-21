@@ -425,7 +425,7 @@ async function handle(update, env) {
       const result = await executeArbitragePaper(env,chatId,opportunity,100);
       const sign = result.pnl>0?"+":"";
       const label = result.outcome==="win"?"✅ ДЕМО-СДЕЛКА В ПЛЮС":result.outcome==="loss"?"❌ ДЕМО-СДЕЛКА В МИНУС":"➖ БЕЗ РЕЗУЛЬТАТА";
-      await send(env,chatId,"💱 <b>A|MORE ARBITRAGE — PAPER EXECUTION</b>\\n"+label+"\\nПара: <b>"+html(symbol)+"</b>\\nКупить: "+html(buyExchange)+" · средняя цена "+price(result.buy.averagePrice)+"\\nПродать: "+html(sellExchange)+" · средняя цена "+price(result.sell.averagePrice)+"\\nОбъём: "+result.quantity.toFixed(8)+" "+html(symbol.replace("USDT",""))+" (~"+result.quoteBudget.toFixed(2)+" USDT)\\nКомиссии: "+result.buyFee.toFixed(3)+"% + "+result.sellFee.toFixed(3)+"%\\nИтог после комиссий: <b>"+sign+result.pnl.toFixed(4)+" USDT</b>\\nДемо-баланс: <b>"+result.balance.toFixed(2)+" USDT</b>\\n\\n<i>Симуляция по текущим стаканам и средней цене исполнения. Предполагается заранее размещённый инвентарь на обеих биржах; перевод активов не моделируется. Реальные ордера не отправляются.</i>");
+      await send(env,chatId,"💱 <b>A|MORE ARBITRAGE — PAPER EXECUTION</b>\n"+label+"\nПара: <b>"+html(symbol)+"</b>\nКупить: "+html(buyExchange)+" · средняя цена "+price(result.buy.averagePrice)+"\nПродать: "+html(sellExchange)+" · средняя цена "+price(result.sell.averagePrice)+"\nОбъём: "+result.quantity.toFixed(8)+" "+html(symbol.replace("USDT",""))+" (~"+result.quoteBudget.toFixed(2)+" USDT)\nКомиссии: "+result.buyFee.toFixed(3)+"% + "+result.sellFee.toFixed(3)+"%\nИтог после комиссий: <b>"+sign+result.pnl.toFixed(4)+" USDT</b>\nДемо-баланс: <b>"+result.balance.toFixed(2)+" USDT</b>\n\n<i>Симуляция по текущим стаканам и средней цене исполнения. Предполагается заранее размещённый инвентарь на обеих биржах; перевод активов не моделируется. Реальные ордера не отправляются.</i>");
     } catch(e) { await send(env,chatId,"⚠️ Демо-исполнение не состоялось: "+html(e.message)); }
   } else if (command === "/arbi_demo" || action === "arbi_demo") {
     await send(env,chatId,"🔎 Ищу лучшую возможность и проверяю глубину стаканов…");
@@ -436,7 +436,7 @@ async function handle(update, env) {
       if (!best) throw new Error("Нет возможности выше порога net-спреда.");
       const result = await executeArbitragePaper(env,chatId,best,100);
       const sign = result.pnl>0?"+":"";
-      await send(env,chatId,"💱 <b>A|MORE ARBITRAGE — PAPER EXECUTION</b>\\nПара: <b>"+html(best.symbol)+"</b>\\nКупить: "+html(best.buyExchange)+" · "+price(result.buy.averagePrice)+"\\nПродать: "+html(best.sellExchange)+" · "+price(result.sell.averagePrice)+"\\nИтог после комиссий: <b>"+sign+result.pnl.toFixed(4)+" USDT</b>\\nДемо-баланс: <b>"+result.balance.toFixed(2)+" USDT</b>\\n<i>Исполнение смоделировано по текущим стаканам; реальные ордера не отправляются.</i>");
+      await send(env,chatId,"💱 <b>A|MORE ARBITRAGE — PAPER EXECUTION</b>\nПара: <b>"+html(best.symbol)+"</b>\nКупить: "+html(best.buyExchange)+" · "+price(result.buy.averagePrice)+"\nПродать: "+html(best.sellExchange)+" · "+price(result.sell.averagePrice)+"\nИтог после комиссий: <b>"+sign+result.pnl.toFixed(4)+" USDT</b>\nДемо-баланс: <b>"+result.balance.toFixed(2)+" USDT</b>\n<i>Исполнение смоделировано по текущим стаканам; реальные ордера не отправляются.</i>");
     } catch(e) { await send(env,chatId,"⚠️ Демо-сделка не состоялась: "+html(e.message)); }
   } else if (["/start","/help"].includes(command) || action === "help") {
     await send(env, chatId, "⚡ <b>Добро пожаловать в A|MORE ARBITRAGE</b>\nСканер межбиржевых расхождений цен.\n\n" + help(), {reply_markup:keyboard});
@@ -460,7 +460,7 @@ async function scheduled(env) {
     const key = "alert:" + x.symbol + ":" + x.buyExchange + ":" + x.sellExchange;
     if (await env.SUBSCRIBERS.get(key)) continue;
     await env.SUBSCRIBERS.put(key,"1",{expirationTtl:300});
-    const message = "🚨 <b>A|MORE — новая возможность</b>\\n<b>" + html(x.symbol) + "</b>\\nКупить: " + price(x.buy) + " • " + html(x.buyExchange) + "\\nПродать: " + price(x.sell) + " • " + html(x.sellExchange) + "\\nРасчётный net: <b>+" + x.net.toFixed(3) + "%</b>\\n<i>Нажми «Сделка» для проверки стаканов и виртуального исполнения обеих сторон.</i>";
+    const message = "🚨 <b>A|MORE — новая возможность</b>\n<b>" + html(x.symbol) + "</b>\nКупить: " + price(x.buy) + " • " + html(x.buyExchange) + "\nПродать: " + price(x.sell) + " • " + html(x.sellExchange) + "\nРасчётный net: <b>+" + x.net.toFixed(3) + "%</b>\n<i>Нажми «Сделка» для проверки стаканов и виртуального исполнения обеих сторон.</i>";
     const reply_markup = {inline_keyboard:[[{text:"💱 Сделка · PAPER",callback_data:"arbi_trade:"+x.symbol+":"+x.buyExchange+":"+x.sellExchange}],[{text:"🔄 Обновить сканирование",callback_data:"scan"}]]};
     await Promise.allSettled(list.keys.map(k => send(env,k.name.slice(5),message,{reply_markup})));
   }
