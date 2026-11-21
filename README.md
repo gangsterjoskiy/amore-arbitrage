@@ -69,3 +69,10 @@ GET /health возвращает JSON с ok: true. Команда /scan полу
 - Confidence — оценка модели, а не статистическая вероятность выигрыша. Режим предназначен только для демо-тестирования; качество и задержка не подтверждены.
 - Для работы нужен Workers AI binding `AI` (добавлен в `wrangler.toml`). Бесплатная квота Cloudflare Workers AI ограничена 10 000 Neurons в сутки; после её исчерпания запросы могут завершаться ошибкой на Free plan. Проверяй usage в Cloudflare Dashboard.
 - AI Committee не использует API-ключи бирж, не размещает реальные ордера и не гарантирует прогноз.
+
+
+## Signal history and AI usage statistics
+
+- The Mini App statistics view combines open Signals forecasts with the last 100 settled demo operations, showing Moscow entry time, direction, virtual stake, and pending/win/loss/draw result.
+- AI Committee usage is recorded from Workers AI response usage metadata. Neurons are estimated from the published GLM-4.7-Flash rates: 5,500 Neurons per million input tokens and 36,400 per million output tokens. Daily display uses UTC day boundaries and the 10,000-Neuron Free allocation.
+- Usage rows without returned metadata (for example, a timed-out inference) cannot be measured and are not counted. The displayed remaining allocation is therefore an app-side estimate, not an authoritative Cloudflare billing meter. Confirm actual consumption in the Cloudflare Workers AI dashboard.

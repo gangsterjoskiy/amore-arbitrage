@@ -55,6 +55,16 @@ export async function runAICommittee(env, market, timeoutMs = DEFAULT_TIMEOUT_MS
     });
     const result = await Promise.race([inference, timeout]);
     const parsed = parseObject(extractText(result));
+    const rawUsage = result?.usage || result?.result?.usage || {};
+    const promptTokens = Number(rawUsage.prompt_tokens);
+    const completionTokens = Number(rawUsage.completion_tokens);
+    const hasUsage = Number.isFinite(promptTokens) && Number.isFinite(completionTokens);
+    const usage = hasUsage ? {
+      promptTokens,
+      completionTokens,
+      totalTokens: Number.isFinite(Number(rawUsage.total_tokens)) ? Number(rawUsage.total_tokens) : promptTokens + completionTokens,
+      neurons: Number(((promptTokens * 5500 + completionTokens * 36400) / 1000000).toFixed(6))
+    } : null;
     const analysts = parsed?.analysts || {};
     const normalized = {
       trend: cleanAnalyst(analysts.trend, "trend"),
@@ -70,6 +80,7 @@ export async function runAICommittee(env, market, timeoutMs = DEFAULT_TIMEOUT_MS
     return {
       model: MODEL,
       latencyMs: Date.now() - startedAt,
+      usage,
       analysts: normalized,
       verdict: {
         direction: verdictDirection,

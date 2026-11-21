@@ -274,6 +274,21 @@ const keyboard = { inline_keyboard: [
 async function send(env, chatId, text, extra = {}) {
   return tg(env, "sendMessage", {chat_id:chatId,text,parse_mode:"HTML",disable_web_page_preview:true,reply_markup:keyboard,...extra});
 }
+async function recordAIUsage(env, chatId, committee, meta = {}) {
+  const usage = committee?.usage;
+  if (!usage || !Number.isFinite(Number(usage.neurons))) return false;
+  const day = new Date().toISOString().slice(0,10);
+  const row = {
+    at:new Date().toISOString(), model:committee.model || "@cf/zai-org/glm-4.7-flash",
+    promptTokens:Number(usage.promptTokens), completionTokens:Number(usage.completionTokens),
+    totalTokens:Number(usage.totalTokens), neurons:Number(usage.neurons),
+    latencyMs:Number(committee.latencyMs) || null,
+    symbol:meta.symbol || null, direction:meta.direction || committee.verdict?.direction || null
+  };
+  const key = "ai:usage:" + chatId + ":" + day + ":" + Date.now() + ":" + crypto.randomUUID();
+  await env.SUBSCRIBERS.put(key,JSON.stringify(row),{expirationTtl:60*60*24*45});
+  return true;
+}
 function help() {
   return "🧭 <b>A|MORE — главное меню</b>\n\n<b>📊 A|MORE Arbitrage</b> — сравнение цен на спотовых биржах и расчёт net-спреда.\n<b>📈 A|MORE Signals</b> — алгоритмический анализ минутных свечей. <b>🧠 AI Committee</b> — четыре аналитические роли и главный арбитр.\n<b>💼 Демо-балансы</b> — отдельные виртуальные счета двух модулей.\n<b>🧾 Статистика</b> — результаты тестирования.\n\nВсе сделки виртуальные. Межбиржевой спред не означает, что ордера реально исполнимы. Точность сигналов не подтверждена статистически. Для управления используй кнопки меню ниже.";
 }
@@ -393,7 +408,11 @@ async function handle(update, env) {
     const account = await getDemoAccount(env, chatId);
     const a = account.arbi, t = account.trading;
     const pct = w => (w.wins + w.losses) ? (w.wins / (w.wins + w.losses) * 100).toFixed(1) + "%" : "пока нет данных";
-    await send(env, chatId, "📊 <b>A|MORE — СТАТИСТИКА ДЕМО</b>\n\n<b>A|MORE Arbitrage</b>\nРасчётных сделок: " + a.trades + "\nМодельный P/L: " + (a.pnl > 0 ? "+" : "") + a.pnl.toFixed(2) + " USDT\n\n<b>A|MORE Signals</b>\nПрогнозов: " + t.trades + "\nУспешных: " + t.wins + " • Неуспешных: " + t.losses + " • Ничьих: " + t.draws + "\nДоля успешных: " + pct(t) + "\nP/L: " + (t.pnl > 0 ? "+" : "") + t.pnl.toFixed(2) + " USDT\n\n<i>Статистика демо-модели. Маленькая выборка не доказывает наличие преимущества.</i>");
+    const usageDay = new Date().toISOString().slice(0,10);
+    const usageKeys = await env.SUBSCRIBERS.list({prefix:"ai:usage:"+chatId+":"+usageDay+":",limit:1000});
+    let aiRequests=0,aiNeurons=0,aiPrompt=0,aiCompletion=0;
+    for(const key of usageKeys.keys){const raw=await env.SUBSCRIBERS.get(key.name);if(!raw)continue;try{const row=JSON.parse(raw);aiRequests++;aiNeurons+=Number(row.neurons)||0;aiPrompt+=Number(row.promptTokens)||0;aiCompletion+=Number(row.completionTokens)||0;}catch{}}
+    await send(env, chatId, "📊 <b>A|MORE — СТАТИСТИКА ДЕМО</b>\n\n<b>A|MORE Arbitrage</b>\nРасчётных сделок: " + a.trades + "\nМодельный P/L: " + (a.pnl > 0 ? "+" : "") + a.pnl.toFixed(2) + " USDT\n\n<b>A|MORE Signals</b>\nПрогнозов: " + t.trades + "\nУспешных: " + t.wins + " • Неуспешных: " + t.losses + " • Ничьих: " + t.draws + "\nДоля успешных: " + pct(t) + "\nP/L: " + (t.pnl > 0 ? "+" : "") + t.pnl.toFixed(2) + " USDT\n\n<b>AI Committee сегодня</b>\nЗапросов с учтённым расходом: " + aiRequests + "\nТокены: " + aiPrompt + " вход / " + aiCompletion + " выход\nРасход: " + aiNeurons.toFixed(2) + " / 10 000 Neurons\n\n<i>Учёт по usage-метаданным ответа модели; таймауты без ответа могут не попасть в счётчик. Демо-статистика не доказывает преимущество стратегии.</i>");
   } else if (action === "trade_menu") {
     await send(env, chatId, "📈 <b>A|MORE Signals</b>\nВыбери период свечей. В режиме «Авто» бот проверит M1/M3/M5 и потребует совпадения минимум двух периодов. В Telegram по умолчанию анализируется EURUSD; другой актив выбери в A|MORE Terminal.", {reply_markup:{inline_keyboard:[[{text:"⚡ ATM · быстрый прогноз",callback_data:"trade:atm"}],[{text:"⚡ M1 · 1 мин",callback_data:"trade:1m"},{text:"🎯 M3 · 3 мин",callback_data:"trade:3m"},{text:"🎯 M5 · 5 мин",callback_data:"trade:5m"}],[{text:"🤖 Авто · все периоды",callback_data:"trade:auto"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]}});
   } else if (command === "/trade" || action === "trade" || action?.startsWith("trade:")) {
@@ -409,6 +428,10 @@ async function handle(update, env) {
     try {
       if (await env.SUBSCRIBERS.get("user:stop:" + chatId)) throw new Error("A|MORE STOP включён. Возобнови работу кнопкой RESUME.");
       const result = await openTradingDemo(env, chatId, timeframe, pair, assetType, aiMode ? "ai" : atmMode ? "atm" : "strict");
+      if (aiMode) {
+        const committee = result.aiCommittee || result.trade?.aiCommittee;
+        if (committee) await recordAIUsage(env,chatId,committee,{symbol:result.trade?.symbol||pair,direction:result.trade?.direction||committee.verdict?.direction});
+      }
       if (result.none) {
         const diag = (result.diagnostics || []).map(x => "<b>" + html(x.symbol) + " · " + html(x.timeframe) + "</b>: EMA " + html(x.ema) + ", RSI " + x.rsi + ", свеча " + html(x.candle) + ", ADX " + (x.adx ?? "—") + ", подтверждения " + x.score + "/6" + (x.rejection ? " · " + html(x.rejection) : "")).join("\n");
         const errors = result.errors?.length ? "\n\n⚠️ Ошибки данных:\n" + html(result.errors.join("\n")) : "";
@@ -494,7 +517,24 @@ export default {
         if (legacyTradeRaw) { try { activeTrades.push(JSON.parse(legacyTradeRaw)); } catch {} }
         activeTrades.sort((a,b)=>Number(b.openedAt||b.entryAt||0)-Number(a.openedAt||a.entryAt||0));
         const history = await getDemoHistory(env, chatId);
-        return Response.json({account,history,activeTrade:activeTrades[0]||null,activeTrades,stopped:!!(await env.SUBSCRIBERS.get("user:stop:" + chatId))},{headers:{"cache-control":"no-store"}});
+        const usageDay = new Date().toISOString().slice(0,10);
+        const usageKeys = await env.SUBSCRIBERS.list({prefix:"ai:usage:"+chatId+":"+usageDay+":",limit:1000});
+        const usageRows = (await Promise.all(usageKeys.keys.map(async key => {
+          const raw = await env.SUBSCRIBERS.get(key.name);
+          if (!raw) return null;
+          try { return JSON.parse(raw); } catch { return null; }
+        }))).filter(Boolean).sort((a,b)=>String(b.at).localeCompare(String(a.at)));
+        const aiUsage = usageRows.reduce((sum,row)=>({
+          requests:sum.requests+1,
+          promptTokens:sum.promptTokens+(Number(row.promptTokens)||0),
+          completionTokens:sum.completionTokens+(Number(row.completionTokens)||0),
+          totalTokens:sum.totalTokens+(Number(row.totalTokens)||0),
+          neurons:sum.neurons+(Number(row.neurons)||0)
+        }),{requests:0,promptTokens:0,completionTokens:0,totalTokens:0,neurons:0});
+        aiUsage.neurons=Number(aiUsage.neurons.toFixed(6));
+        aiUsage.remainingNeurons=Math.max(0,10000-aiUsage.neurons);
+        aiUsage.rows=usageRows.slice(0,20);
+        return Response.json({account,history,activeTrade:activeTrades[0]||null,activeTrades,aiUsage,stopped:!!(await env.SUBSCRIBERS.get("user:stop:" + chatId))},{headers:{"cache-control":"no-store"}});
       } catch(e) { return Response.json({error:e.message},{status:401,headers:{"cache-control":"no-store"}}); }
     }
     if (url.pathname === "/api/signal" && request.method === "POST") {
@@ -507,6 +547,10 @@ export default {
         const timeframe = body.timeframe || "auto";
         const pair = body.pair || "ALL";
         const result = await openTradingDemo(env, chatId, timeframe, pair, body.assetType || "forex", body.mode === "ai" ? "ai" : body.mode === "atm" ? "atm" : "strict");
+        if (body.mode === "ai") {
+          const committee = result.aiCommittee || result.trade?.aiCommittee;
+          if (committee) await recordAIUsage(env,chatId,committee,{symbol:result.trade?.symbol||pair,direction:result.trade?.direction||committee.verdict?.direction});
+        }
         if (result.trade) {
           // Telegram notification is best-effort: a notification failure must not turn
           // a successfully created demo signal into an API error for the Mini App.
