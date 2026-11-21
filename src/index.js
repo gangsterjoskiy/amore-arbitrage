@@ -264,7 +264,8 @@ async function tg(env, method, body) {
 const keyboard = { inline_keyboard: [
   [{text:"◈ Открыть A|MORE Terminal",web_app:{url:"https://amore-arbitrage.hn29wknr7h.workers.dev/?v=20261119-11"}}],
   [{text:"📊 A|MORE Arbitrage — сканировать",callback_data:"scan"}],
-  [{text:"📈 A|MORE Signals — выбрать таймфрейм",callback_data:"trade_menu"}],\n  [{text:"🧠 AI Committee — быстрый AI-анализ",callback_data:"trade:ai"}],
+  [{text:"📈 A|MORE Signals — выбрать таймфрейм",callback_data:"trade_menu"}],
+  [{text:"🧠 AI Committee — быстрый AI-анализ",callback_data:"trade:ai"}],
   [{text:"💼 Демо-балансы",callback_data:"demo"},{text:"🧾 Статистика",callback_data:"stats"}],
   [{text:"🔔 Уведомления: включить",callback_data:"subscribe"},{text:"🔕 выключить",callback_data:"unsubscribe"}],
   [{text:"🧪 Тестовая сделка",callback_data:"arbi_demo"}],
