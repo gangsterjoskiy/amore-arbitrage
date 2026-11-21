@@ -265,6 +265,7 @@ const keyboard = { inline_keyboard: [
   [{text:"◈ Открыть A|MORE Terminal",web_app:{url:"https://amore-arbitrage.hn29wknr7h.workers.dev/?v=20261119-11"}}],
   [{text:"📊 A|MORE Arbitrage — сканировать",callback_data:"scan"}],
   [{text:"📈 A|MORE Signals — выбрать таймфрейм",callback_data:"trade_menu"}],
+  [{text:"🧠 AI Committee — быстрый AI-анализ",callback_data:"trade:ai"}],
   [{text:"💼 Демо-балансы",callback_data:"demo"},{text:"🧾 Статистика",callback_data:"stats"}],
   [{text:"🔔 Уведомления: включить",callback_data:"subscribe"},{text:"🔕 выключить",callback_data:"unsubscribe"}],
   [{text:"🧪 Тестовая сделка",callback_data:"arbi_demo"}],
@@ -274,7 +275,7 @@ async function send(env, chatId, text, extra = {}) {
   return tg(env, "sendMessage", {chat_id:chatId,text,parse_mode:"HTML",disable_web_page_preview:true,reply_markup:keyboard,...extra});
 }
 function help() {
-  return "🧭 <b>A|MORE — главное меню</b>\n\n<b>📊 A|MORE Arbitrage</b> — сравнение цен на спотовых биржах и расчёт net-спреда.\n<b>📈 A|MORE Signals</b> — анализ минутных свечей и виртуальные прогнозы направления.\n<b>💼 Демо-балансы</b> — отдельные виртуальные счета двух модулей.\n<b>🧾 Статистика</b> — результаты тестирования.\n\nВсе сделки виртуальные. Межбиржевой спред не означает, что ордера реально исполнимы. Точность сигналов не подтверждена статистически. Для управления используй кнопки меню ниже.";
+  return "🧭 <b>A|MORE — главное меню</b>\n\n<b>📊 A|MORE Arbitrage</b> — сравнение цен на спотовых биржах и расчёт net-спреда.\n<b>📈 A|MORE Signals</b> — алгоритмический анализ минутных свечей. <b>🧠 AI Committee</b> — четыре аналитические роли и главный арбитр.\n<b>💼 Демо-балансы</b> — отдельные виртуальные счета двух модулей.\n<b>🧾 Статистика</b> — результаты тестирования.\n\nВсе сделки виртуальные. Межбиржевой спред не означает, что ордера реально исполнимы. Точность сигналов не подтверждена статистически. Для управления используй кнопки меню ниже.";
 }
 function minDepthFallback(env) { return setting(env.MIN_TOP_OF_BOOK_DEPTH_USDT,25,1000000); }
 function report(data, env) {
@@ -398,15 +399,16 @@ async function handle(update, env) {
   } else if (command === "/trade" || action === "trade" || action?.startsWith("trade:")) {
     const tradeParts = action?.startsWith("trade:") ? action.slice(6).split(":") : ["auto","EURUSD"];
     const atmMode = tradeParts[0] === "atm";
-    const timeframe = atmMode ? "auto" : (tradeParts[0] || "auto");
+    const aiMode = tradeParts[0] === "ai";
+    const timeframe = (atmMode || aiMode) ? "auto" : (tradeParts[0] || "auto");
     const pair = tradeParts[1] || "EURUSD";
     const assetType = webAssetType || "forex";
     const pairLabel = pair === "ALL" ? (assetType === "crypto" ? "вся криптовалюта" : assetType === "stocks" ? "все акции" : "все валютные пары Forex") : pair;
-    const label = (atmMode ? "ATM · быстрый снимок M1" : timeframe === "auto" ? "все таймфреймы M1/M3/M5" : timeframe + " (" + TIMEFRAMES[timeframe].label + ")") + " • " + pairLabel;
+    const label = (atmMode ? "ATM · быстрый снимок M1" : aiMode ? "AI Committee · M1/M3/M5" : timeframe === "auto" ? "все таймфреймы M1/M3/M5" : timeframe + " (" + TIMEFRAMES[timeframe].label + ")") + " • " + pairLabel;
     await send(env, chatId, "🔎 Анализирую текущую картину: " + label + "…");
     try {
       if (await env.SUBSCRIBERS.get("user:stop:" + chatId)) throw new Error("A|MORE STOP включён. Возобнови работу кнопкой RESUME.");
-      const result = await openTradingDemo(env, chatId, timeframe, pair, assetType, atmMode ? "atm" : "strict");
+      const result = await openTradingDemo(env, chatId, timeframe, pair, assetType, aiMode ? "ai" : atmMode ? "atm" : "strict");
       if (result.none) {
         const diag = (result.diagnostics || []).map(x => "<b>" + html(x.symbol) + " · " + html(x.timeframe) + "</b>: EMA " + html(x.ema) + ", RSI " + x.rsi + ", свеча " + html(x.candle) + ", ADX " + (x.adx ?? "—") + ", подтверждения " + x.score + "/6" + (x.rejection ? " · " + html(x.rejection) : "")).join("\n");
         const errors = result.errors?.length ? "\n\n⚠️ Ошибки данных:\n" + html(result.errors.join("\n")) : "";
@@ -471,7 +473,7 @@ async function scheduled(env) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (request.method === "GET" && url.pathname === "/health") return Response.json({ok:true,service:"A|More Arbitrage",version:"0.1.0"});
+    if (request.method === "GET" && url.pathname === "/health") return Response.json({ok:true,service:"A|More Arbitrage",version:"0.2.0-ai-committee"});
     if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/app" || url.pathname === "/app/")) {
       const assetUrl = new URL("/index.html", url.origin);
       return env.ASSETS ? env.ASSETS.fetch(new Request(assetUrl, request)) : new Response("Mini App assets are not configured",{status:503});
@@ -504,7 +506,7 @@ export default {
         const body = await request.json();
         const timeframe = body.timeframe || "auto";
         const pair = body.pair || "ALL";
-        const result = await openTradingDemo(env, chatId, timeframe, pair, body.assetType || "forex", body.mode === "atm" ? "atm" : "strict");
+        const result = await openTradingDemo(env, chatId, timeframe, pair, body.assetType || "forex", body.mode === "ai" ? "ai" : body.mode === "atm" ? "atm" : "strict");
         if (result.trade) {
           // Telegram notification is best-effort: a notification failure must not turn
           // a successfully created demo signal into an API error for the Mini App.

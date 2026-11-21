@@ -16,3 +16,6 @@ id = "611eab90872948cbbd55a44a07662a8c"
 [assets]
 directory = "./public"
 binding = "ASSETS"
+
+[ai]
+binding = "AI"
