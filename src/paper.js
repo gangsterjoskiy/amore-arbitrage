@@ -3,6 +3,17 @@ import { runAICommittee } from "./ai-committee.js";
 
 const TRADE_STAKE = 10;
 const PAYOUT = 0.8;
+const AI_ANALYSIS_BUDGET_MS = 2800;
+async function withinDeadline(promise, deadline, stage) {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw new Error(stage + ": общий лимит времени исчерпан");
+  let timer;
+  try {
+    return await Promise.race([promise, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(stage + ": превышен общий лимит " + AI_ANALYSIS_BUDGET_MS + " мс")), remaining);
+    })]);
+  } finally { clearTimeout(timer); }
+}
 // Regular Forex instruments currently listed in Pocket Option's general asset schedule.
 export const FOREX_PAIRS = ["EURUSD","AUDCAD","AUDCHF","AUDJPY","AUDUSD","CADCHF","CADJPY","CHFJPY","EURAUD","EURCAD","EURCHF","EURGBP","EURJPY","GBPAUD","GBPCAD","GBPCHF","GBPJPY","GBPUSD","USDCAD","USDCHF","USDJPY"];
 const CRYPTO_PAIRS = ["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"];
@@ -29,7 +40,7 @@ async function yahooChartUncached(symbol,params) {
   const attempts = hosts.map(async host => {
     const response = await fetch("https://" + host + "/v8/finance/chart/" + encodeURIComponent(symbol) + "?" + params, {
       headers:{accept:"application/json","user-agent":"Mozilla/5.0 A|MORE Signals"},
-      signal:AbortSignal.timeout(2300)
+      signal:AbortSignal.timeout(1200)
     });
     if (!response.ok) throw new Error(host + " HTTP " + response.status);
     const payload = await response.json(), result = payload.chart?.result?.[0];
@@ -129,7 +140,7 @@ async function candles(symbol,interval) {
   if(cached)candleCache.delete(key);
   if(candleInflight.has(key))return candleInflight.get(key);
   const request=candlesUncached(symbol,interval).then(rows=>{
-    candleCache.set(key,{rows,expiresAt:Date.now()+4000});
+    candleCache.set(key,{rows,expiresAt:Date.now()+8000});
     if(candleCache.size>80)candleCache.delete(candleCache.keys().next().value);
     return rows;
   }).finally(()=>candleInflight.delete(key));
@@ -324,6 +335,7 @@ function analyze(rows,mode="strict") {
     diagnostics:{ema:trend,rsi:analysis.rsi,candle:analysis.candle,patterns,adx:analysis.adx,score,direction:direction||"нет",rejection:rejection||"нет единого направления"}};
 }
 export async function openTradingDemo(env,chatId,requestedTimeframe="auto",requestedPair="ALL",requestedAssetType="forex",requestedMode="strict") {
+  const analysisStartedAt=Date.now(),analysisDeadline=analysisStartedAt+AI_ANALYSIS_BUDGET_MS;
   if(!env.SUBSCRIBERS)throw new Error("KV namespace SUBSCRIBERS is not configured");
   if(await env.SUBSCRIBERS.get("user:stop:"+chatId))throw new Error("A|MORE STOP включён. Возобнови работу кнопкой в Telegram-боте.");
   // Каждый запрос создаёт отдельный прогноз. Уже открытые прогнозы не блокируют новые.
@@ -359,7 +371,8 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
       results[index]={...task,signal,rows};
     }catch(e){results[index]={...task,error:task.symbol+" "+task.interval+": "+e.message};}
   }};
-  await Promise.all(Array.from({length:Math.min(3,tasks.length)},()=>worker()));
+  try { await withinDeadline(Promise.all(Array.from({length:Math.min(3,tasks.length)},()=>worker())),analysisDeadline,"Получение рыночных данных"); }
+  catch(e) { return {none:true,errors:[e.message],diagnostics:results.filter(x=>x.signal).map(x=>({symbol:x.symbol,timeframe:x.interval,...x.signal.diagnostics})),requestedTimeframe,latencyMs:Date.now()-analysisStartedAt}; }
   const rawCandidates=results.filter(x=>x.signal?.direction).map(x=>({symbol:x.symbol,timeframe:x.interval,...x.signal}));
   let candidates=rawCandidates;
   if(requestedTimeframe==="auto"&&requestedMode!=="atm"){
@@ -387,12 +400,14 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
       return {none:true,errors:["AI Committee: недостаточно свежих свечей"],diagnostics,requestedTimeframe};
     }
     try{
+      const remainingAI=analysisDeadline-Date.now();
+      if(remainingAI<150)throw new Error("недостаточно времени до общего дедлайна");
       aiCommittee=await runAICommittee(env,{
         symbol:best.symbol,timeframe:best.timeframe,assetType:requestedAssetType,
         lastCandleAgeMs:dataAgeMs,
         algorithmicContext:{direction:best.direction,score:best.score,agreement:best.agreement,indicators:best.analysis},
         candles:candleRows
-      },1700);
+      },Math.min(1300,remainingAI));
     }catch(e){
       return {none:true,errors:["AI Committee: "+e.message],diagnostics,requestedTimeframe,aiUnavailable:true};
     }
@@ -420,6 +435,7 @@ export async function openTradingDemo(env,chatId,requestedTimeframe="auto",reque
   const now=Date.now(),duration=TIMEFRAMES[best.timeframe].expiryMs;
   const id=String(chatId)+":"+now+":"+crypto.randomUUID();
   const trade={id,symbol:best.symbol,timeframe:best.timeframe,mode:requestedMode,direction:best.direction,entry,entrySource,stake:TRADE_STAKE,payout:PAYOUT,openedAt:now,entryAt:now,entryTimeMsk:mskTime(now),settleAt:now+duration,expiryMs:duration,reasons:best.reasons,score:best.score,timeframeAgreement:best.agreement,analysis:best.analysis,aiCommittee,signalCandleCloseTime:best.candleCloseTime,assetType:STOCKS.includes(best.symbol)?"stock":FOREX_PAIRS.includes(best.symbol)?"forex":"crypto",marketSource:STOCKS.includes(best.symbol)?"Yahoo Finance · обычный биржевой рынок":FOREX_PAIRS.includes(best.symbol)?"Yahoo Finance · Forex spot (не поток Pocket Option)":"агрегированные спотовые котировки"};
+  if(aiCommittee)aiCommittee.totalLatencyMs=Date.now()-analysisStartedAt;
   const tradeKey="paper:trading:"+chatId+":"+now+":"+crypto.randomUUID();
   await env.SUBSCRIBERS.put(tradeKey,JSON.stringify(trade),{expirationTtl:Math.ceil(duration/1000)+300});
   return {trade};
@@ -457,5 +473,5 @@ export function formatOpenTrade(trade) {
   const explanation=trade.mode==="ai"?telegramEscape(a.explanation||trade.reasons.join("; ")):(a.explanation||trade.reasons.join("; "));
   const assetLabel=trade.assetType==="stock"?"Акция":trade.assetType==="forex"?"Валютная пара":"Криптовалюта";
   const symbolLabel=trade.symbol.endsWith("USDT")?trade.symbol.replace("USDT","/USDT"):trade.symbol.length===6?trade.symbol.slice(0,3)+"/"+trade.symbol.slice(3):trade.symbol;
-  return "📊 <b>A|MORE SIGNALS — "+(trade.mode==="atm"?"ATM · БЫСТРЫЙ ПРОГНОЗ":trade.mode==="ai"?"AI COMMITTEE · БЫСТРЫЙ АНАЛИЗ":"СТРОГИЙ ДЕМО-ПРОГНОЗ")+"</b>\n\n<b>"+assetLabel+":</b> "+symbolLabel+"\n"+(trade.direction==="UP"?"🟢 <b>СТАВКА: ВВЕРХ ↑</b>":"🔴 <b>СТАВКА: ВНИЗ ↓</b>")+"\n\n<b>Время входа: "+(trade.entryTimeMsk||mskTime(trade.entryAt||trade.openedAt))+" МСК</b>\n<b>Таймфрейм:</b> "+tf+" · экспирация "+TIMEFRAMES[tf].label+"\n<b>Цена на момент сигнала:</b> "+trade.entry+"\n<b>Ожидаемое окончание:</b> "+mskTime(trade.settleAt)+" МСК\n\n<b>Уверенность:</b> "+(a.confidence||"Не оценена")+" · <b>факторы:</b> "+trade.score+"/6\n\n<b>ПОЧЕМУ ЭТО НАПРАВЛЕНИЕ</b>\n"+explanation+"\n\n"+(trade.aiCommittee?"<b>Мнения AI-комитета</b>\n• Тренд: "+trade.aiCommittee.analysts.trend.direction+" — "+telegramEscape(trade.aiCommittee.analysts.trend.argument)+"\n• Свечи: "+trade.aiCommittee.analysts.candles.direction+" — "+telegramEscape(trade.aiCommittee.analysts.candles.argument)+"\n• Price Action: "+trade.aiCommittee.analysts.price_action.direction+" — "+telegramEscape(trade.aiCommittee.analysts.price_action.argument)+"\n• Критик: "+trade.aiCommittee.analysts.critic.direction+" — "+telegramEscape(trade.aiCommittee.analysts.critic.argument)+"\n• Главный арбитр: "+trade.aiCommittee.verdict.direction+" · "+Math.round(trade.aiCommittee.verdict.confidence*100)+"/100\n• Отмена сценария: "+telegramEscape(trade.aiCommittee.verdict.invalidation)+"\n• Время AI: "+trade.aiCommittee.latencyMs+" мс\n\n":"")+"<b>Техническая картина</b>\n• Тренд: "+(a.trend||"—")+"\n• Свечной паттерн: "+(a.pattern||"—")+"\n• RSI (14): "+(a.rsi??"—")+"\n• Поддержка: "+(a.support??"—")+"\n• Сопротивление: "+(a.resistance??"—")+"\n• ADX (сила тренда): "+(a.adx??"—")+"\n• MACD: "+(a.macd??"—")+"\n• Структура: "+(a.structure??"—")+"\n• Подтверждения модели: "+trade.score+"/6\n• Согласование таймфреймов: "+(trade.timeframeAgreement||1)+(trade.timeframeAgreement>1?"/3":"/1")+"\n\n<i>Источник: "+(trade.marketSource||"внешние рыночные данные")+". Не поток Pocket Option и не OTC-котировка. Сигнал не гарантирует результат; сверь инструмент и цену у брокера.</i>";
+  return "📊 <b>A|MORE SIGNALS — "+(trade.mode==="atm"?"ATM · БЫСТРЫЙ ПРОГНОЗ":trade.mode==="ai"?"AI COMMITTEE · БЫСТРЫЙ АНАЛИЗ":"СТРОГИЙ ДЕМО-ПРОГНОЗ")+"</b>\n\n<b>"+assetLabel+":</b> "+symbolLabel+"\n"+(trade.direction==="UP"?"🟢 <b>СТАВКА: ВВЕРХ ↑</b>":"🔴 <b>СТАВКА: ВНИЗ ↓</b>")+"\n\n<b>Время входа: "+(trade.entryTimeMsk||mskTime(trade.entryAt||trade.openedAt))+" МСК</b>\n<b>Таймфрейм:</b> "+tf+" · экспирация "+TIMEFRAMES[tf].label+"\n<b>Цена на момент сигнала:</b> "+trade.entry+"\n<b>Ожидаемое окончание:</b> "+mskTime(trade.settleAt)+" МСК\n\n<b>Уверенность:</b> "+(a.confidence||"Не оценена")+" · <b>факторы:</b> "+trade.score+"/6\n\n<b>ПОЧЕМУ ЭТО НАПРАВЛЕНИЕ</b>\n"+explanation+"\n\n"+(trade.aiCommittee?"<b>Мнения AI-комитета</b>\n• Тренд: "+trade.aiCommittee.analysts.trend.direction+" — "+telegramEscape(trade.aiCommittee.analysts.trend.argument)+"\n• Свечи: "+trade.aiCommittee.analysts.candles.direction+" — "+telegramEscape(trade.aiCommittee.analysts.candles.argument)+"\n• Price Action: "+trade.aiCommittee.analysts.price_action.direction+" — "+telegramEscape(trade.aiCommittee.analysts.price_action.argument)+"\n• Критик: "+trade.aiCommittee.analysts.critic.direction+" — "+telegramEscape(trade.aiCommittee.analysts.critic.argument)+"\n• Главный арбитр: "+trade.aiCommittee.verdict.direction+" · "+Math.round(trade.aiCommittee.verdict.confidence*100)+"/100\n• Отмена сценария: "+telegramEscape(trade.aiCommittee.verdict.invalidation)+"\n• Время AI: "+trade.aiCommittee.latencyMs+" мс · весь анализ: "+trade.aiCommittee.totalLatencyMs+" мс\n\n":"")+"<b>Техническая картина</b>\n• Тренд: "+(a.trend||"—")+"\n• Свечной паттерн: "+(a.pattern||"—")+"\n• RSI (14): "+(a.rsi??"—")+"\n• Поддержка: "+(a.support??"—")+"\n• Сопротивление: "+(a.resistance??"—")+"\n• ADX (сила тренда): "+(a.adx??"—")+"\n• MACD: "+(a.macd??"—")+"\n• Структура: "+(a.structure??"—")+"\n• Подтверждения модели: "+trade.score+"/6\n• Согласование таймфреймов: "+(trade.timeframeAgreement||1)+(trade.timeframeAgreement>1?"/3":"/1")+"\n\n<i>Источник: "+(trade.marketSource||"внешние рыночные данные")+". Не поток Pocket Option и не OTC-котировка. Сигнал не гарантирует результат; сверь инструмент и цену у брокера.</i>";
 }
