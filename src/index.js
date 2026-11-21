@@ -399,7 +399,8 @@ async function handle(update, env) {
   } else if (command === "/trade" || action === "trade" || action?.startsWith("trade:")) {
     const tradeParts = action?.startsWith("trade:") ? action.slice(6).split(":") : ["auto","EURUSD"];
     const atmMode = tradeParts[0] === "atm";
-    const timeframe = atmMode ? "auto" : (tradeParts[0] || "auto");
+    const aiMode = tradeParts[0] === "ai";
+    const timeframe = (atmMode || aiMode) ? "auto" : (tradeParts[0] || "auto");
     const pair = tradeParts[1] || "EURUSD";
     const assetType = webAssetType || "forex";
     const pairLabel = pair === "ALL" ? (assetType === "crypto" ? "вся криптовалюта" : assetType === "stocks" ? "все акции" : "все валютные пары Forex") : pair;
