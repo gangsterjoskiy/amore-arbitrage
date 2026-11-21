@@ -14,4 +14,5 @@ jobs:
       - run: node --check src/index.js
       - run: node --check src/demo.js
       - run: node --check src/paper.js
+      - run: node --check src/ai-committee.js
       - run: node scripts/check-html.mjs > /tmp/amore-miniapp.js && node --check /tmp/amore-miniapp.js
