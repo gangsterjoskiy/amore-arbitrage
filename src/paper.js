@@ -84,7 +84,7 @@ async function candlesUncached(symbol, interval) {
     volume:Number(x.volume||0), closeTime:Number(x.closeTime)
   })).filter(x=>[x.open,x.high,x.low,x.close,x.closeTime].every(Number.isFinite)&&x.open>0&&x.high>0&&x.low>0&&x.close>0);
   const getJson = async (url,label) => {
-    const response=await fetch(url,{headers:{accept:"application/json"},signal:AbortSignal.timeout(2300)});
+    const response=await fetch(url,{headers:{accept:"application/json"},signal:AbortSignal.timeout(1200)});
     if(!response.ok)throw new Error(label+" HTTP "+response.status);
     return response.json();
   };
@@ -335,7 +335,7 @@ function analyze(rows,mode="strict") {
     diagnostics:{ema:trend,rsi:analysis.rsi,candle:analysis.candle,patterns,adx:analysis.adx,score,direction:direction||"нет",rejection:rejection||"нет единого направления"}};
 }
 export async function openTradingDemo(env,chatId,requestedTimeframe="auto",requestedPair="ALL",requestedAssetType="forex",requestedMode="strict") {
-  const analysisStartedAt=Date.now(),analysisDeadline=analysisStartedAt+AI_ANALYSIS_BUDGET_MS;
+  const analysisStartedAt=Date.now(),analysisDeadline=analysisStartedAt+(requestedMode==="ai"?AI_ANALYSIS_BUDGET_MS:15000);
   if(!env.SUBSCRIBERS)throw new Error("KV namespace SUBSCRIBERS is not configured");
   if(await env.SUBSCRIBERS.get("user:stop:"+chatId))throw new Error("A|MORE STOP включён. Возобнови работу кнопкой в Telegram-боте.");
   // Каждый запрос создаёт отдельный прогноз. Уже открытые прогнозы не блокируют новые.
