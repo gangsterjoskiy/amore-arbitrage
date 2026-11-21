@@ -77,9 +77,9 @@ export function formatDemoAccount(account) {
     const resolved = wallet.wins + wallet.losses;
     const accuracy = resolved ? ((wallet.wins / resolved) * 100).toFixed(1) : "—";
     const stats = kind === "arbi"
-      ? "Модельных записей: " + wallet.trades
+      ? "Демо-исполнений: " + wallet.trades + " • ✅ " + wallet.wins + " • ❌ " + wallet.losses + " • ➖ " + wallet.draws
       : "Прогнозов: " + wallet.trades + " • ✅ " + wallet.wins + " • ❌ " + wallet.losses + " • ➖ " + wallet.draws;
-    const accuracyLabel = kind === "arbi" ? "не оценивается по top-of-book" : accuracy === "—" ? "—" : accuracy + "%";
+    const accuracyLabel = accuracy === "—" ? "—" : accuracy + "%";
     const sign = wallet.pnl > 0 ? "+" : "";
     return "<b>" + name + "</b>\n" +
       "Баланс: <b>" + wallet.balance.toFixed(2) + " USDT</b>\n" +

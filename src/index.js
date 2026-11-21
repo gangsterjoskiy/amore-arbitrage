@@ -164,6 +164,95 @@ async function scan(env) {
   };
 }
 
+async function fetchOrderBookJson(url, label) {
+  const response = await fetch(url, {headers:{accept:"application/json"},signal:AbortSignal.timeout(8000)});
+  if (!response.ok) throw new Error(label + " HTTP " + response.status);
+  return response.json();
+}
+function cleanBookLevels(levels) {
+  return (Array.isArray(levels) ? levels : []).map(x => Array.isArray(x) ? [Number(x[0]),Number(x[1])] : [Number(x?.p),Number(x?.s)])
+    .filter(([price,qty]) => Number.isFinite(price) && Number.isFinite(qty) && price > 0 && qty > 0);
+}
+async function getExecutionOrderBook(exchange, symbol) {
+  if (exchange === "Bybit") {
+    const data = await fetchOrderBookJson("https://api.bybit.com/v5/market/orderbook?category=spot&symbol="+encodeURIComponent(symbol)+"&limit=50","Bybit order book");
+    if (data.retCode !== 0) throw new Error(data.retMsg || "Bybit order book error");
+    return {asks:cleanBookLevels(data.result?.a),bids:cleanBookLevels(data.result?.b)};
+  }
+  if (exchange === "OKX") {
+    const instrument = symbol.replace("USDT","-USDT");
+    const data = await fetchOrderBookJson("https://www.okx.com/api/v5/market/books?instId="+encodeURIComponent(instrument)+"&sz=50","OKX order book");
+    if (data.code !== "0" || !data.data?.[0]) throw new Error(data.msg || "OKX order book error");
+    return {asks:cleanBookLevels(data.data[0].asks),bids:cleanBookLevels(data.data[0].bids)};
+  }
+  if (exchange === "Gate.io") {
+    const pair = symbol.replace("USDT","_USDT");
+    const data = await fetchOrderBookJson("https://api.gateio.ws/api/v4/spot/order_book?currency_pair="+encodeURIComponent(pair)+"&limit=50","Gate.io order book");
+    return {asks:cleanBookLevels(data.asks),bids:cleanBookLevels(data.bids)};
+  }
+  if (exchange === "Kraken") {
+    const payload = await fetchOrderBookJson("https://api.kraken.com/0/public/AssetPairs","Kraken asset pairs");
+    if (payload.error?.length) throw new Error(payload.error.join(", "));
+    const normalized = symbol.replace("BTC","XBT");
+    const pair = Object.entries(payload.result || {}).find(([,info]) =>
+      String(info.altname || "").replace("/","") === normalized || String(info.altname || "").replace("/","") === symbol
+    )?.[0];
+    if (!pair) throw new Error("Kraken: пара " + symbol + " не найдена");
+    const book = await fetchOrderBookJson("https://api.kraken.com/0/public/Depth?pair="+encodeURIComponent(pair)+"&count=50","Kraken order book");
+    if (book.error?.length) throw new Error(book.error.join(", "));
+    const row = Object.values(book.result || {})[0];
+    return {asks:cleanBookLevels(row?.asks),bids:cleanBookLevels(row?.bids)};
+  }
+  throw new Error("Неподдерживаемая биржа для демо-исполнения: " + exchange);
+}
+function consumeAskBook(asks, quoteBudget) {
+  let remaining = quoteBudget, quantity = 0, quoteSpent = 0;
+  for (const [price,available] of asks) {
+    const take = Math.min(available,remaining/price);
+    if (take <= 0) continue;
+    quantity += take;
+    quoteSpent += take*price;
+    remaining -= take*price;
+    if (remaining <= quoteBudget*1e-10) break;
+  }
+  if (remaining > quoteBudget*1e-6 || quantity <= 0) throw new Error("Недостаточная глубина ask для полного виртуального объёма покупки");
+  return {quantity,quoteSpent,averagePrice:quoteSpent/quantity};
+}
+function consumeBidBook(bids, quantity) {
+  let remaining = quantity, quoteReceived = 0, sold = 0;
+  for (const [price,available] of bids) {
+    const take = Math.min(available,remaining);
+    if (take <= 0) continue;
+    sold += take;
+    quoteReceived += take*price;
+    remaining -= take;
+    if (remaining <= quantity*1e-10) break;
+  }
+  if (remaining > quantity*1e-6 || sold <= 0) throw new Error("Недостаточная глубина bid для полного виртуального объёма продажи");
+  return {quantity:sold,quoteReceived,averagePrice:quoteReceived/sold};
+}
+async function executeArbitragePaper(env, chatId, opportunity, quoteBudget = 100) {
+  const account = await getDemoAccount(env, chatId);
+  if (account.arbi.balance < quoteBudget) throw new Error("На демо-балансе A|MORE Arbitrage недостаточно средств.");
+  const [buyBook,sellBook] = await Promise.all([
+    getExecutionOrderBook(opportunity.buyExchange,opportunity.symbol),
+    getExecutionOrderBook(opportunity.sellExchange,opportunity.symbol)
+  ]);
+  const buy = consumeAskBook(buyBook.asks,quoteBudget);
+  const sell = consumeBidBook(sellBook.bids,buy.quantity);
+  const feeFor = exchange => setting(env[({Bybit:"BYBIT_TAKER_FEE",OKX:"OKX_TAKER_FEE",Kraken:"KRAKEN_TAKER_FEE","Gate.io":"GATEIO_TAKER_FEE"})[exchange]],exchange==="Gate.io"?0.2:0.1,5);
+  const buyFee = feeFor(opportunity.buyExchange), sellFee = feeFor(opportunity.sellExchange);
+  const buyCost = buy.quoteSpent*(1+buyFee/100);
+  const sellProceeds = sell.quoteReceived*(1-sellFee/100);
+  const pnl = Number((sellProceeds-buyCost).toFixed(8));
+  const outcome = pnl > 0.00000001 ? "win" : pnl < -0.00000001 ? "loss" : "draw";
+  const updated = await applyDemoResult(env,chatId,"arbi",pnl,outcome,{
+    type:"arbitrage_paper_execution",symbol:opportunity.symbol,buyExchange:opportunity.buyExchange,sellExchange:opportunity.sellExchange,
+    quoteBudget,quantity:buy.quantity,buyAverage:buy.averagePrice,sellAverage:sell.averagePrice,
+    buyFee,sellFee,buyCost,sellProceeds,pnl
+  });
+  return {buy,sell,buyFee,sellFee,buyCost,sellProceeds,pnl,outcome,balance:updated.arbi.balance,quantity:buy.quantity,quoteBudget};
+}
 async function tg(env, method, body) {
   const r = await fetch("https://api.telegram.org/bot" + env.TELEGRAM_BOT_TOKEN + "/" + method, {
     method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify(body)
@@ -217,8 +306,12 @@ function report(data, env) {
 }
 async function runScan(env, chatId) {
   await send(env, chatId, "⏳ Получаю котировки доступных спотовых бирж…");
-  try { const data = await scan(env); await send(env, chatId, report(data, env), {reply_markup:keyboard}); }
-  catch (e) { await send(env, chatId, "⚠️ Сканирование не завершено: " + html(e.message), {reply_markup:keyboard}); }
+  try {
+    const data = await scan(env);
+    const tradeRows = data.opportunities.slice(0,5).map(x => [{text:"💱 Сделка "+x.symbol+" · демо",callback_data:"arbi_trade:"+x.symbol+":"+x.buyExchange+":"+x.sellExchange}]);
+    const reply_markup = {inline_keyboard:[...tradeRows,[{text:"🔄 Обновить сканирование",callback_data:"scan"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]};
+    await send(env, chatId, report(data, env), {reply_markup:tradeRows.length?reply_markup:keyboard});
+  } catch (e) { await send(env, chatId, "⚠️ Сканирование не завершено: " + html(e.message), {reply_markup:keyboard}); }
 }
 async function telegramMiniAppUser(request, env) {
   const initData = request.headers.get("X-Telegram-Init-Data") || "";
@@ -301,12 +394,12 @@ async function handle(update, env) {
     const pct = w => (w.wins + w.losses) ? (w.wins / (w.wins + w.losses) * 100).toFixed(1) + "%" : "пока нет данных";
     await send(env, chatId, "📊 <b>A|MORE — СТАТИСТИКА ДЕМО</b>\n\n<b>A|MORE Arbitrage</b>\nРасчётных сделок: " + a.trades + "\nМодельный P/L: " + (a.pnl > 0 ? "+" : "") + a.pnl.toFixed(2) + " USDT\n\n<b>A|MORE Signals</b>\nПрогнозов: " + t.trades + "\nУспешных: " + t.wins + " • Неуспешных: " + t.losses + " • Ничьих: " + t.draws + "\nДоля успешных: " + pct(t) + "\nP/L: " + (t.pnl > 0 ? "+" : "") + t.pnl.toFixed(2) + " USDT\n\n<i>Статистика демо-модели. Маленькая выборка не доказывает наличие преимущества.</i>");
   } else if (action === "trade_menu") {
-    await send(env, chatId, "📈 <b>A|MORE Signals</b>\nВыбери период свечей. В режиме «Авто» бот проверит M1/M3/M5 и потребует совпадения минимум двух периодов.", {reply_markup:{inline_keyboard:[[{text:"⚡ ATM · быстрый прогноз",callback_data:"trade:atm"}],[{text:"⚡ M1 · 1 мин",callback_data:"trade:1m"},{text:"🎯 M3 · 3 мин",callback_data:"trade:3m"},{text:"🎯 M5 · 5 мин",callback_data:"trade:5m"}],[{text:"🤖 Авто · все периоды",callback_data:"trade:auto"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]}});
+    await send(env, chatId, "📈 <b>A|MORE Signals</b>\nВыбери период свечей. В режиме «Авто» бот проверит M1/M3/M5 и потребует совпадения минимум двух периодов. В Telegram по умолчанию анализируется EURUSD; другой актив выбери в A|MORE Terminal.", {reply_markup:{inline_keyboard:[[{text:"⚡ ATM · быстрый прогноз",callback_data:"trade:atm"}],[{text:"⚡ M1 · 1 мин",callback_data:"trade:1m"},{text:"🎯 M3 · 3 мин",callback_data:"trade:3m"},{text:"🎯 M5 · 5 мин",callback_data:"trade:5m"}],[{text:"🤖 Авто · все периоды",callback_data:"trade:auto"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]}});
   } else if (command === "/trade" || action === "trade" || action?.startsWith("trade:")) {
-    const tradeParts = action?.startsWith("trade:") ? action.slice(6).split(":") : ["auto","ALL"];
+    const tradeParts = action?.startsWith("trade:") ? action.slice(6).split(":") : ["auto","EURUSD"];
     const atmMode = tradeParts[0] === "atm";
     const timeframe = atmMode ? "auto" : (tradeParts[0] || "auto");
-    const pair = (atmMode ? tradeParts[1] : tradeParts[1]) || "ALL";
+    const pair = tradeParts[1] || "EURUSD";
     const assetType = webAssetType || "forex";
     const pairLabel = pair === "ALL" ? (assetType === "crypto" ? "вся криптовалюта" : assetType === "stocks" ? "все акции" : "все валютные пары Forex") : pair;
     const label = (atmMode ? "ATM · быстрый снимок M1" : timeframe === "auto" ? "все таймфреймы M1/M3/M5" : timeframe + " (" + TIMEFRAMES[timeframe].label + ")") + " • " + pairLabel;
@@ -320,22 +413,34 @@ async function handle(update, env) {
         await send(env, chatId, atmMode ? "⚠️ <b>ATM: сейчас не удалось получить пригодные рыночные свечи.</b> Направление не буду выдумывать без котировок.\nПроверены: " + label + "." + errors : "⏸ <b>A|MORE Signals: подтверждённого сигнала пока нет.</b>\nПроверены: " + label + ". Фильтры не ослаблялись. Диагностика:\n\n" + (diag || "Недостаточно данных для анализа.") + errors + "\n\nМожно выбрать другой период или режим «Авто». Сигналы не генерируются искусственно.", {reply_markup:{inline_keyboard:[[{text:"⚡ M1",callback_data:"trade:1m"},{text:"🎯 M3",callback_data:"trade:3m"},{text:"📊 M5",callback_data:"trade:5m"}],[{text:"🤖 Проверить все периоды",callback_data:"trade:auto"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]}});
       } else await send(env, chatId, formatOpenTrade(result.trade), {reply_markup:{inline_keyboard:[[{text:"🔄 Новый анализ",callback_data:"trade_menu"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]}});
     } catch (e) { await send(env, chatId, "⚠️ Не удалось открыть демо-прогноз: " + html(e.message)); }
-  } else if (command === "/arbi_demo" || action === "arbi_demo") {
-    await send(env, chatId, "🔎 A|MORE Arbitrage проверяет текущие межбиржевые котировки…");
+  } else if (action?.startsWith("arbi_trade:")) {
+    const [symbol,buyExchange,sellExchange] = action.slice("arbi_trade:".length).split(":");
+    await send(env,chatId,"⏳ Проверяю стаканы и моделирую обе стороны сделки…");
     try {
       if (await env.SUBSCRIBERS.get("user:stop:" + chatId)) throw new Error("A|MORE STOP включён. Возобнови работу кнопкой RESUME.");
-      const account = await getDemoAccount(env, chatId);
-      const stake = 100;
-      if (account.arbi.balance < stake) throw new Error("На демо-балансе A|MORE Arbitrage недостаточно средств.");
+      if (!symbol || !buyExchange || !sellExchange || buyExchange===sellExchange) throw new Error("Некорректные параметры демо-сделки.");
+      const data = await scan(env);
+      const opportunity = data.opportunities.find(x=>x.symbol===symbol&&x.buyExchange===buyExchange&&x.sellExchange===sellExchange);
+      if (!opportunity) throw new Error("Возможность исчезла или больше не проходит фильтр. Обнови сканирование.");
+      const lockKey = "arbi:paper:lock:"+chatId+":"+symbol+":"+buyExchange+":"+sellExchange;
+      if (await env.SUBSCRIBERS.get(lockKey)) throw new Error("Эта демо-возможность уже была исполнена. Повторная кнопка заблокирована на 60 секунд.");
+      await env.SUBSCRIBERS.put(lockKey,"1",{expirationTtl:60});
+      const result = await executeArbitragePaper(env,chatId,opportunity,100);
+      const sign = result.pnl>0?"+":"";
+      const label = result.outcome==="win"?"✅ ДЕМО-СДЕЛКА В ПЛЮС":result.outcome==="loss"?"❌ ДЕМО-СДЕЛКА В МИНУС":"➖ БЕЗ РЕЗУЛЬТАТА";
+      await send(env,chatId,"💱 <b>A|MORE ARBITRAGE — PAPER EXECUTION</b>\n"+label+"\nПара: <b>"+html(symbol)+"</b>\nКупить: "+html(buyExchange)+" · средняя цена "+price(result.buy.averagePrice)+"\nПродать: "+html(sellExchange)+" · средняя цена "+price(result.sell.averagePrice)+"\nОбъём: "+result.quantity.toFixed(8)+" "+html(symbol.replace("USDT",""))+" (~"+result.quoteBudget.toFixed(2)+" USDT)\nКомиссии: "+result.buyFee.toFixed(3)+"% + "+result.sellFee.toFixed(3)+"%\nИтог после комиссий: <b>"+sign+result.pnl.toFixed(4)+" USDT</b>\nДемо-баланс: <b>"+result.balance.toFixed(2)+" USDT</b>\n\n<i>Симуляция по текущим стаканам и средней цене исполнения. Предполагается заранее размещённый инвентарь на обеих биржах; перевод активов не моделируется. Реальные ордера не отправляются.</i>");
+    } catch(e) { await send(env,chatId,"⚠️ Демо-исполнение не состоялось: "+html(e.message)); }
+  } else if (command === "/arbi_demo" || action === "arbi_demo") {
+    await send(env,chatId,"🔎 Ищу лучшую возможность и проверяю глубину стаканов…");
+    try {
+      if (await env.SUBSCRIBERS.get("user:stop:" + chatId)) throw new Error("A|MORE STOP включён. Возобнови работу кнопкой RESUME.");
       const data = await scan(env);
       const best = data.opportunities[0];
-      if (!best) await send(env, chatId, "⏸ <b>A|MORE Arbitrage: возможности нет.</b> Не открываю виртуальную сделку без положительного расчётного net-спреда.");
-      else {
-        const pnl = Number((stake * best.net / 100).toFixed(8));
-        const updated = await applyDemoResult(env, chatId, "arbi", pnl, "win", {type:"arbitrage",symbol:best.symbol,buyExchange:best.buyExchange,sellExchange:best.sellExchange,buy:best.buy,sell:best.sell,net:best.net,stake});
-        await send(env, chatId, "🟢 <b>A|MORE ARBITRAGE — ДЕМО-СДЕЛКА</b>\nПара: <b>" + html(best.symbol) + "</b>\nКупить: " + price(best.buy) + " • " + html(best.buyExchange) + "\nПродать: " + price(best.sell) + " • " + html(best.sellExchange) + "\nВиртуальный объём: " + stake.toFixed(2) + " USDT\nРасчётный net: +" + best.net.toFixed(3) + "%\nМодельный P/L: <b>+" + pnl.toFixed(4) + " USDT</b>\nБаланс A|MORE Arbitrage: <b>" + updated.arbi.balance.toFixed(2) + " USDT</b>\n\n<i>Это расчёт по лучшим котировкам, не подтверждённое исполнение двух ордеров. Реальные комиссии, глубина и проскальзывание могут изменить результат.</i>");
-      }
-    } catch (e) { await send(env, chatId, "⚠️ Сканирование A|MORE Arbitrage не завершено: " + html(e.message)); }
+      if (!best) throw new Error("Нет возможности выше порога net-спреда.");
+      const result = await executeArbitragePaper(env,chatId,best,100);
+      const sign = result.pnl>0?"+":"";
+      await send(env,chatId,"💱 <b>A|MORE ARBITRAGE — PAPER EXECUTION</b>\nПара: <b>"+html(best.symbol)+"</b>\nКупить: "+html(best.buyExchange)+" · "+price(result.buy.averagePrice)+"\nПродать: "+html(best.sellExchange)+" · "+price(result.sell.averagePrice)+"\nИтог после комиссий: <b>"+sign+result.pnl.toFixed(4)+" USDT</b>\nДемо-баланс: <b>"+result.balance.toFixed(2)+" USDT</b>\n<i>Исполнение смоделировано по текущим стаканам; реальные ордера не отправляются.</i>");
+    } catch(e) { await send(env,chatId,"⚠️ Демо-сделка не состоялась: "+html(e.message)); }
   } else if (["/start","/help"].includes(command) || action === "help") {
     await send(env, chatId, "⚡ <b>Добро пожаловать в A|MORE ARBITRAGE</b>\nСканер межбиржевых расхождений цен.\n\n" + help(), {reply_markup:keyboard});
   } else if (command === "/scan" || action === "scan") await runScan(env, chatId);
@@ -358,8 +463,9 @@ async function scheduled(env) {
     const key = "alert:" + x.symbol + ":" + x.buyExchange + ":" + x.sellExchange;
     if (await env.SUBSCRIBERS.get(key)) continue;
     await env.SUBSCRIBERS.put(key,"1",{expirationTtl:300});
-    const message = "🚨 <b>A|MORE — новая возможность</b>\n<b>" + html(x.symbol) + "</b>\nКупить: " + price(x.buy) + " • " + html(x.buyExchange) + "\nПродать: " + price(x.sell) + " • " + html(x.sellExchange) + "\nРасчётный net: <b>+" + x.net.toFixed(3) + "%</b>\n<i>Проверь стакан, комиссии, лимиты и возможность перевода.</i>";
-    await Promise.allSettled(list.keys.map(k => send(env,k.name.slice(5),message,{reply_markup:keyboard})));
+    const message = "🚨 <b>A|MORE — новая возможность</b>\n<b>" + html(x.symbol) + "</b>\nКупить: " + price(x.buy) + " • " + html(x.buyExchange) + "\nПродать: " + price(x.sell) + " • " + html(x.sellExchange) + "\nРасчётный net: <b>+" + x.net.toFixed(3) + "%</b>\n<i>Нажми «Сделка» для проверки стаканов и виртуального исполнения обеих сторон.</i>";
+    const reply_markup = {inline_keyboard:[[{text:"💱 Сделка · PAPER",callback_data:"arbi_trade:"+x.symbol+":"+x.buyExchange+":"+x.sellExchange}],[{text:"🔄 Обновить сканирование",callback_data:"scan"}]]};
+    await Promise.allSettled(list.keys.map(k => send(env,k.name.slice(5),message,{reply_markup})));
   }
 }
 export default {
