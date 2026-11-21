@@ -170,7 +170,7 @@ async function fetchOrderBookJson(url, label) {
   return response.json();
 }
 function cleanBookLevels(levels) {
-  return (Array.isArray(levels) ? levels : []).map(x => [Number(x[0]),Number(x[1])])
+  return (Array.isArray(levels) ? levels : []).map(x => Array.isArray(x) ? [Number(x[0]),Number(x[1])] : [Number(x?.p),Number(x?.s)])
     .filter(([price,qty]) => Number.isFinite(price) && Number.isFinite(qty) && price > 0 && qty > 0);
 }
 async function getExecutionOrderBook(exchange, symbol) {
@@ -306,8 +306,12 @@ function report(data, env) {
 }
 async function runScan(env, chatId) {
   await send(env, chatId, "⏳ Получаю котировки доступных спотовых бирж…");
-  try { const data = await scan(env); await send(env, chatId, report(data, env), {reply_markup:keyboard}); }
-  catch (e) { await send(env, chatId, "⚠️ Сканирование не завершено: " + html(e.message), {reply_markup:keyboard}); }
+  try {
+    const data = await scan(env);
+    const tradeRows = data.opportunities.slice(0,5).map(x => [{text:"💱 Сделка "+x.symbol+" · демо",callback_data:"arbi_trade:"+x.symbol+":"+x.buyExchange+":"+x.sellExchange}]);
+    const reply_markup = {inline_keyboard:[...tradeRows,[{text:"🔄 Обновить сканирование",callback_data:"scan"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]};
+    await send(env, chatId, report(data, env), {reply_markup:tradeRows.length?reply_markup:keyboard});
+  } catch (e) { await send(env, chatId, "⚠️ Сканирование не завершено: " + html(e.message), {reply_markup:keyboard}); }
 }
 async function telegramMiniAppUser(request, env) {
   const initData = request.headers.get("X-Telegram-Init-Data") || "";
@@ -409,22 +413,31 @@ async function handle(update, env) {
         await send(env, chatId, atmMode ? "⚠️ <b>ATM: сейчас не удалось получить пригодные рыночные свечи.</b> Направление не буду выдумывать без котировок.\nПроверены: " + label + "." + errors : "⏸ <b>A|MORE Signals: подтверждённого сигнала пока нет.</b>\nПроверены: " + label + ". Фильтры не ослаблялись. Диагностика:\n\n" + (diag || "Недостаточно данных для анализа.") + errors + "\n\nМожно выбрать другой период или режим «Авто». Сигналы не генерируются искусственно.", {reply_markup:{inline_keyboard:[[{text:"⚡ M1",callback_data:"trade:1m"},{text:"🎯 M3",callback_data:"trade:3m"},{text:"📊 M5",callback_data:"trade:5m"}],[{text:"🤖 Проверить все периоды",callback_data:"trade:auto"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]}});
       } else await send(env, chatId, formatOpenTrade(result.trade), {reply_markup:{inline_keyboard:[[{text:"🔄 Новый анализ",callback_data:"trade_menu"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]}});
     } catch (e) { await send(env, chatId, "⚠️ Не удалось открыть демо-прогноз: " + html(e.message)); }
-  } else if (command === "/arbi_demo" || action === "arbi_demo") {
-    await send(env, chatId, "🔎 A|MORE Arbitrage проверяет текущие межбиржевые котировки…");
+  } else if (action?.startsWith("arbi_trade:")) {
+    const [symbol,buyExchange,sellExchange] = action.slice("arbi_trade:".length).split(":");
+    await send(env,chatId,"⏳ Проверяю стаканы и моделирую обе стороны сделки…");
     try {
       if (await env.SUBSCRIBERS.get("user:stop:" + chatId)) throw new Error("A|MORE STOP включён. Возобнови работу кнопкой RESUME.");
-      const account = await getDemoAccount(env, chatId);
-      const stake = 100;
-      if (account.arbi.balance < stake) throw new Error("На демо-балансе A|MORE Arbitrage недостаточно средств.");
+      if (!symbol || !buyExchange || !sellExchange || buyExchange===sellExchange) throw new Error("Некорректные параметры демо-сделки.");
+      const data = await scan(env);
+      const opportunity = data.opportunities.find(x=>x.symbol===symbol&&x.buyExchange===buyExchange&&x.sellExchange===sellExchange);
+      if (!opportunity) throw new Error("Возможность исчезла или больше не проходит фильтр. Обнови сканирование.");
+      const result = await executeArbitragePaper(env,chatId,opportunity,100);
+      const sign = result.pnl>0?"+":"";
+      const label = result.outcome==="win"?"✅ ДЕМО-СДЕЛКА В ПЛЮС":result.outcome==="loss"?"❌ ДЕМО-СДЕЛКА В МИНУС":"➖ БЕЗ РЕЗУЛЬТАТА";
+      await send(env,chatId,"💱 <b>A|MORE ARBITRAGE — PAPER EXECUTION</b>\\n"+label+"\\nПара: <b>"+html(symbol)+"</b>\\nКупить: "+html(buyExchange)+" · средняя цена "+price(result.buy.averagePrice)+"\\nПродать: "+html(sellExchange)+" · средняя цена "+price(result.sell.averagePrice)+"\\nОбъём: "+result.quantity.toFixed(8)+" "+html(symbol.replace("USDT",""))+" (~"+result.quoteBudget.toFixed(2)+" USDT)\\nКомиссии: "+result.buyFee.toFixed(3)+"% + "+result.sellFee.toFixed(3)+"%\\nИтог после комиссий: <b>"+sign+result.pnl.toFixed(4)+" USDT</b>\\nДемо-баланс: <b>"+result.balance.toFixed(2)+" USDT</b>\\n\\n<i>Симуляция по текущим стаканам и средней цене исполнения. Предполагается заранее размещённый инвентарь на обеих биржах; перевод активов не моделируется. Реальные ордера не отправляются.</i>");
+    } catch(e) { await send(env,chatId,"⚠️ Демо-исполнение не состоялось: "+html(e.message)); }
+  } else if (command === "/arbi_demo" || action === "arbi_demo") {
+    await send(env,chatId,"🔎 Ищу лучшую возможность и проверяю глубину стаканов…");
+    try {
+      if (await env.SUBSCRIBERS.get("user:stop:" + chatId)) throw new Error("A|MORE STOP включён. Возобнови работу кнопкой RESUME.");
       const data = await scan(env);
       const best = data.opportunities[0];
-      if (!best) await send(env, chatId, "⏸ <b>A|MORE Arbitrage: возможности нет.</b> Не открываю виртуальную сделку без положительного расчётного net-спреда.");
-      else {
-        const pnl = Number((stake * best.net / 100).toFixed(8));
-        const updated = await applyDemoResult(env, chatId, "arbi", pnl, "win", {type:"arbitrage",symbol:best.symbol,buyExchange:best.buyExchange,sellExchange:best.sellExchange,buy:best.buy,sell:best.sell,net:best.net,stake});
-        await send(env, chatId, "🟢 <b>A|MORE ARBITRAGE — ДЕМО-СДЕЛКА</b>\nПара: <b>" + html(best.symbol) + "</b>\nКупить: " + price(best.buy) + " • " + html(best.buyExchange) + "\nПродать: " + price(best.sell) + " • " + html(best.sellExchange) + "\nВиртуальный объём: " + stake.toFixed(2) + " USDT\nРасчётный net: +" + best.net.toFixed(3) + "%\nМодельный P/L: <b>+" + pnl.toFixed(4) + " USDT</b>\nБаланс A|MORE Arbitrage: <b>" + updated.arbi.balance.toFixed(2) + " USDT</b>\n\n<i>Это расчёт по лучшим котировкам, не подтверждённое исполнение двух ордеров. Реальные комиссии, глубина и проскальзывание могут изменить результат.</i>");
-      }
-    } catch (e) { await send(env, chatId, "⚠️ Сканирование A|MORE Arbitrage не завершено: " + html(e.message)); }
+      if (!best) throw new Error("Нет возможности выше порога net-спреда.");
+      const result = await executeArbitragePaper(env,chatId,best,100);
+      const sign = result.pnl>0?"+":"";
+      await send(env,chatId,"💱 <b>A|MORE ARBITRAGE — PAPER EXECUTION</b>\\nПара: <b>"+html(best.symbol)+"</b>\\nКупить: "+html(best.buyExchange)+" · "+price(result.buy.averagePrice)+"\\nПродать: "+html(best.sellExchange)+" · "+price(result.sell.averagePrice)+"\\nИтог после комиссий: <b>"+sign+result.pnl.toFixed(4)+" USDT</b>\\nДемо-баланс: <b>"+result.balance.toFixed(2)+" USDT</b>\\n<i>Исполнение смоделировано по текущим стаканам; реальные ордера не отправляются.</i>");
+    } catch(e) { await send(env,chatId,"⚠️ Демо-сделка не состоялась: "+html(e.message)); }
   } else if (["/start","/help"].includes(command) || action === "help") {
     await send(env, chatId, "⚡ <b>Добро пожаловать в A|MORE ARBITRAGE</b>\nСканер межбиржевых расхождений цен.\n\n" + help(), {reply_markup:keyboard});
   } else if (command === "/scan" || action === "scan") await runScan(env, chatId);
@@ -447,8 +460,9 @@ async function scheduled(env) {
     const key = "alert:" + x.symbol + ":" + x.buyExchange + ":" + x.sellExchange;
     if (await env.SUBSCRIBERS.get(key)) continue;
     await env.SUBSCRIBERS.put(key,"1",{expirationTtl:300});
-    const message = "🚨 <b>A|MORE — новая возможность</b>\n<b>" + html(x.symbol) + "</b>\nКупить: " + price(x.buy) + " • " + html(x.buyExchange) + "\nПродать: " + price(x.sell) + " • " + html(x.sellExchange) + "\nРасчётный net: <b>+" + x.net.toFixed(3) + "%</b>\n<i>Проверь стакан, комиссии, лимиты и возможность перевода.</i>";
-    await Promise.allSettled(list.keys.map(k => send(env,k.name.slice(5),message,{reply_markup:keyboard})));
+    const message = "🚨 <b>A|MORE — новая возможность</b>\\n<b>" + html(x.symbol) + "</b>\\nКупить: " + price(x.buy) + " • " + html(x.buyExchange) + "\\nПродать: " + price(x.sell) + " • " + html(x.sellExchange) + "\\nРасчётный net: <b>+" + x.net.toFixed(3) + "%</b>\\n<i>Нажми «Сделка» для проверки стаканов и виртуального исполнения обеих сторон.</i>";
+    const reply_markup = {inline_keyboard:[[{text:"💱 Сделка · PAPER",callback_data:"arbi_trade:"+x.symbol+":"+x.buyExchange+":"+x.sellExchange}],[{text:"🔄 Обновить сканирование",callback_data:"scan"}]]};
+    await Promise.allSettled(list.keys.map(k => send(env,k.name.slice(5),message,{reply_markup})));
   }
 }
 export default {
