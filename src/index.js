@@ -422,6 +422,9 @@ async function handle(update, env) {
       const data = await scan(env);
       const opportunity = data.opportunities.find(x=>x.symbol===symbol&&x.buyExchange===buyExchange&&x.sellExchange===sellExchange);
       if (!opportunity) throw new Error("Возможность исчезла или больше не проходит фильтр. Обнови сканирование.");
+      const lockKey = "arbi:paper:lock:"+chatId+":"+symbol+":"+buyExchange+":"+sellExchange;
+      if (await env.SUBSCRIBERS.get(lockKey)) throw new Error("Эта демо-возможность уже была исполнена. Повторная кнопка заблокирована на 60 секунд.");
+      await env.SUBSCRIBERS.put(lockKey,"1",{expirationTtl:60});
       const result = await executeArbitragePaper(env,chatId,opportunity,100);
       const sign = result.pnl>0?"+":"";
       const label = result.outcome==="win"?"✅ ДЕМО-СДЕЛКА В ПЛЮС":result.outcome==="loss"?"❌ ДЕМО-СДЕЛКА В МИНУС":"➖ БЕЗ РЕЗУЛЬТАТА";
