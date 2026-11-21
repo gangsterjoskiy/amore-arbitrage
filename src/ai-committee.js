@@ -1,5 +1,5 @@
 const MODEL = "@cf/zai-org/glm-4.7-flash";
-const DEFAULT_TIMEOUT_MS = 1700;
+const DEFAULT_TIMEOUT_MS = 1300;
 
 function extractText(result) {
   if (typeof result === "string") return result;
