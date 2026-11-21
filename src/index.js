@@ -164,6 +164,95 @@ async function scan(env) {
   };
 }
 
+async function fetchOrderBookJson(url, label) {
+  const response = await fetch(url, {headers:{accept:"application/json"},signal:AbortSignal.timeout(8000)});
+  if (!response.ok) throw new Error(label + " HTTP " + response.status);
+  return response.json();
+}
+function cleanBookLevels(levels) {
+  return (Array.isArray(levels) ? levels : []).map(x => [Number(x[0]),Number(x[1])])
+    .filter(([price,qty]) => Number.isFinite(price) && Number.isFinite(qty) && price > 0 && qty > 0);
+}
+async function getExecutionOrderBook(exchange, symbol) {
+  if (exchange === "Bybit") {
+    const data = await fetchOrderBookJson("https://api.bybit.com/v5/market/orderbook?category=spot&symbol="+encodeURIComponent(symbol)+"&limit=50","Bybit order book");
+    if (data.retCode !== 0) throw new Error(data.retMsg || "Bybit order book error");
+    return {asks:cleanBookLevels(data.result?.a),bids:cleanBookLevels(data.result?.b)};
+  }
+  if (exchange === "OKX") {
+    const instrument = symbol.replace("USDT","-USDT");
+    const data = await fetchOrderBookJson("https://www.okx.com/api/v5/market/books?instId="+encodeURIComponent(instrument)+"&sz=50","OKX order book");
+    if (data.code !== "0" || !data.data?.[0]) throw new Error(data.msg || "OKX order book error");
+    return {asks:cleanBookLevels(data.data[0].asks),bids:cleanBookLevels(data.data[0].bids)};
+  }
+  if (exchange === "Gate.io") {
+    const pair = symbol.replace("USDT","_USDT");
+    const data = await fetchOrderBookJson("https://api.gateio.ws/api/v4/spot/order_book?currency_pair="+encodeURIComponent(pair)+"&limit=50","Gate.io order book");
+    return {asks:cleanBookLevels(data.asks),bids:cleanBookLevels(data.bids)};
+  }
+  if (exchange === "Kraken") {
+    const payload = await fetchOrderBookJson("https://api.kraken.com/0/public/AssetPairs","Kraken asset pairs");
+    if (payload.error?.length) throw new Error(payload.error.join(", "));
+    const normalized = symbol.replace("BTC","XBT");
+    const pair = Object.entries(payload.result || {}).find(([,info]) =>
+      String(info.altname || "").replace("/","") === normalized || String(info.altname || "").replace("/","") === symbol
+    )?.[0];
+    if (!pair) throw new Error("Kraken: пара " + symbol + " не найдена");
+    const book = await fetchOrderBookJson("https://api.kraken.com/0/public/Depth?pair="+encodeURIComponent(pair)+"&count=50","Kraken order book");
+    if (book.error?.length) throw new Error(book.error.join(", "));
+    const row = Object.values(book.result || {})[0];
+    return {asks:cleanBookLevels(row?.asks),bids:cleanBookLevels(row?.bids)};
+  }
+  throw new Error("Неподдерживаемая биржа для демо-исполнения: " + exchange);
+}
+function consumeAskBook(asks, quoteBudget) {
+  let remaining = quoteBudget, quantity = 0, quoteSpent = 0;
+  for (const [price,available] of asks) {
+    const take = Math.min(available,remaining/price);
+    if (take <= 0) continue;
+    quantity += take;
+    quoteSpent += take*price;
+    remaining -= take*price;
+    if (remaining <= quoteBudget*1e-10) break;
+  }
+  if (remaining > quoteBudget*1e-6 || quantity <= 0) throw new Error("Недостаточная глубина ask для полного виртуального объёма покупки");
+  return {quantity,quoteSpent,averagePrice:quoteSpent/quantity};
+}
+function consumeBidBook(bids, quantity) {
+  let remaining = quantity, quoteReceived = 0, sold = 0;
+  for (const [price,available] of bids) {
+    const take = Math.min(available,remaining);
+    if (take <= 0) continue;
+    sold += take;
+    quoteReceived += take*price;
+    remaining -= take;
+    if (remaining <= quantity*1e-10) break;
+  }
+  if (remaining > quantity*1e-6 || sold <= 0) throw new Error("Недостаточная глубина bid для полного виртуального объёма продажи");
+  return {quantity:sold,quoteReceived,averagePrice:quoteReceived/sold};
+}
+async function executeArbitragePaper(env, chatId, opportunity, quoteBudget = 100) {
+  const account = await getDemoAccount(env, chatId);
+  if (account.arbi.balance < quoteBudget) throw new Error("На демо-балансе A|MORE Arbitrage недостаточно средств.");
+  const [buyBook,sellBook] = await Promise.all([
+    getExecutionOrderBook(opportunity.buyExchange,opportunity.symbol),
+    getExecutionOrderBook(opportunity.sellExchange,opportunity.symbol)
+  ]);
+  const buy = consumeAskBook(buyBook.asks,quoteBudget);
+  const sell = consumeBidBook(sellBook.bids,buy.quantity);
+  const feeFor = exchange => setting(env[({Bybit:"BYBIT_TAKER_FEE",OKX:"OKX_TAKER_FEE",Kraken:"KRAKEN_TAKER_FEE","Gate.io":"GATEIO_TAKER_FEE"})[exchange]],exchange==="Gate.io"?0.2:0.1,5);
+  const buyFee = feeFor(opportunity.buyExchange), sellFee = feeFor(opportunity.sellExchange);
+  const buyCost = buy.quoteSpent*(1+buyFee/100);
+  const sellProceeds = sell.quoteReceived*(1-sellFee/100);
+  const pnl = Number((sellProceeds-buyCost).toFixed(8));
+  const outcome = pnl > 0.00000001 ? "win" : pnl < -0.00000001 ? "loss" : "draw";
+  const updated = await applyDemoResult(env,chatId,"arbi",pnl,outcome,{
+    type:"arbitrage_paper_execution",symbol:opportunity.symbol,buyExchange:opportunity.buyExchange,sellExchange:opportunity.sellExchange,
+    quoteBudget,quantity:buy.quantity,buyAverage:buy.averagePrice,sellAverage:sell.averagePrice,
+    buyFee,sellFee,buyCost,sellProceeds,pnl
+  });
+  return {buy,sell,buyFee,sellFee,buyCost,sellProceeds,pnl,outcome,balance:updated.arbi.balance,quantity:buy.quantity,quoteBudget};
+}
 async function tg(env, method, body) {
   const r = await fetch("https://api.telegram.org/bot" + env.TELEGRAM_BOT_TOKEN + "/" + method, {
     method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify(body)
