@@ -55,7 +55,7 @@ process.stdout.write("A|MORE Durable Object state tests passed\n");
 
 const askStress = applyAdverseSlippage([[100,2],[101,3]],"buy",10);
 assert.equal(askStress[0][0],100.1);
-assert.equal(askStress[1][0],101.101);
+assert.ok(Math.abs(askStress[1][0]-101.101)<1e-9);
 const bidStress = applyAdverseSlippage([[100,2]],"sell",10);
 assert.equal(bidStress[0][0],99.9);
 assert.equal(executionLatencyAllowed(4999,5000),true);
