@@ -349,7 +349,7 @@ async function executeTriangularPaper(env, chatId, opportunity, quoteBudget = 10
     quoteBudget,feePercent:fee,finalUsdt,pnl,estimatedNetPercent:opportunity.net,latencyMs,adverseSlippageBps:slippageBps,
     leg1Average:leg1.averagePrice,leg2Average:leg2.averagePrice,leg3Average:leg3.averagePrice
   });
-  return {pnl,outcome,balance:updated.arbi.balance,quoteBudget,finalUsdt,feePercent:fee,route:opportunity.route,exchange};
+  return {pnl,outcome,balance:updated.arbi.balance,quoteBudget,finalUsdt,feePercent:fee,route:opportunity.route,exchange,latencyMs,adverseSlippageBps:slippageBps};
 }
 async function runAutoPaperForUser(env, chatId, state, crossOpportunities, triangularOpportunities) {
   const now = Date.now();
@@ -392,7 +392,7 @@ async function runAutoPaperForUser(env, chatId, state, crossOpportunities, trian
         const result = candidate.strategy === "triangular"
           ? await executeTriangularPaper(env,chatId,candidate,quoteBudget)
           : await executeArbitragePaper(env,chatId,candidate,quoteBudget);
-        await recordAutoPaperTrade(env,chatId,{outcome:result.outcome,pnl:result.pnl});
+        const paperState = await recordAutoPaperTrade(env,chatId,{outcome:result.outcome,pnl:result.pnl});
         const route = candidate.strategy === "triangular"
           ? candidate.route
           : candidate.buyExchange+" → "+candidate.sellExchange;
