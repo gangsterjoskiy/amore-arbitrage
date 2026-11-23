@@ -1,7 +1,7 @@
 const DAY_MS = 24 * 60 * 60 * 1000;
 const STATE_TTL_SECONDS = 35 * 24 * 60 * 60;
 
-const stateKey = chatId => "auto:paper:" + chatId;
+const stateKey = chatId => "auto:paper:state:" + chatId;
 const dailyKey = (chatId, day) => "auto:paper:daily:" + chatId + ":" + day;
 
 export async function readAutoPaper(env, chatId) {
