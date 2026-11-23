@@ -76,3 +76,16 @@ GET /health возвращает JSON с ok: true. Команда /scan полу
 - The Mini App statistics view combines open Signals forecasts with the last 100 settled demo operations, showing Moscow entry time, direction, virtual stake, and pending/win/loss/draw result.
 - AI Committee usage is recorded from Workers AI response usage metadata. Neurons are estimated from the published GLM-4.7-Flash rates: 5,500 Neurons per million input tokens and 36,400 per million output tokens. Daily display uses UTC day boundaries and the 10,000-Neuron Free allocation.
 - Usage rows without returned metadata (for example, a timed-out inference) cannot be measured and are not counted. The displayed remaining allocation is therefore an app-side estimate, not an authoritative Cloudflare billing meter. Confirm actual consumption in the Cloudflare Workers AI dashboard.
+
+
+## Автономный 30-дневный PAPER-тест
+
+- В Mini App → «Сделки» можно вручную запустить или остановить 30-дневный автономный PAPER-тест.
+- После запуска Cloudflare Cron проверяет межбиржевые возможности и треугольные маршруты Bybit один раз в минуту.
+- За один cron-цикл выполняется не более одной виртуальной сделки на пользователя; лимит — 12 сделок в сутки, виртуальный объём — 100 USDT.
+- Межбиржевой PAPER использует повторную загрузку стаканов двух площадок и учитывает taker-комиссии.
+- Треугольный PAPER моделирует три последовательных конвертации USDT → BTC → альткоин → USDT или обратный маршрут на Bybit, используя публичные стаканы и комиссию каждой ноги.
+- История хранит тип стратегии, маршрут, результат, P/L и время. Раздел «Сделки» показывает завершённые операции и результаты.
+- Глобальный STOP останавливает автодемо. Возобновление общего режима не включает автодемо автоматически.
+- Тест заканчивается автоматически через 30 дней. Все операции виртуальные: реальные ордера и API-ключи бирж не используются.
+- Это минутный исследовательский симулятор, не HFT и не гарантия доходности. Виртуальное исполнение не моделирует все риски переводов, биржевых лимитов, частичных исполнений в реальном аккаунте и региональных ограничений.

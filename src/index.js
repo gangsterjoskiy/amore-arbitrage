@@ -1,4 +1,5 @@
 import { getDemoAccount, getDemoHistory, resetDemoAccount, formatDemoAccount, applyDemoResult } from "./demo.js";
+import { readAutoPaper, startAutoPaper, stopAutoPaper, recordAutoPaperTrade, getAutoPaperDailyCount, writeAutoPaper, calculateTriangularOpportunities } from "./auto-paper.js";
 import { openTradingDemo, settleTradingDemos, formatOpenTrade, TIMEFRAMES } from "./paper.js";
 
 
@@ -249,10 +250,112 @@ async function executeArbitragePaper(env, chatId, opportunity, quoteBudget = 100
   const updated = await applyDemoResult(env,chatId,"arbi",pnl,outcome,{
     type:"arbitrage_paper_execution",symbol:opportunity.symbol,buyExchange:opportunity.buyExchange,sellExchange:opportunity.sellExchange,
     quoteBudget,quantity:buy.quantity,buyAverage:buy.averagePrice,sellAverage:sell.averagePrice,
-    buyFee,sellFee,buyCost,sellProceeds,pnl
+    buyFee,sellFee,buyCost,sellProceeds,net:opportunity.net,pnl
   });
   return {buy,sell,buyFee,sellFee,buyCost,sellProceeds,pnl,outcome,balance:updated.arbi.balance,quantity:buy.quantity,quoteBudget};
 }
+
+async function scanTriangular(env) {
+  const payload = await fetchOrderBookJson("https://api.bybit.com/v5/market/tickers?category=spot", "Bybit spot tickers");
+  if (payload.retCode !== 0 || !Array.isArray(payload.result?.list)) throw new Error(payload.retMsg || "Bybit triangular ticker response error");
+  return calculateTriangularOpportunities(payload.result.list, {
+    feePercent: setting(env.BYBIT_TAKER_FEE, 0.1, 5),
+    minNetPercent: setting(env.MIN_TRI_NET_SPREAD_PERCENT, 0.25, 20),
+    minDepthUsdt: setting(env.MIN_TOP_OF_BOOK_DEPTH_USDT, 25, 1000000)
+  });
+}
+async function executeTriangularPaper(env, chatId, opportunity, quoteBudget = 100) {
+  const account = await getDemoAccount(env, chatId);
+  if (account.arbi.balance < quoteBudget) throw new Error("На демо-балансе A|MORE Arbitrage недостаточно средств.");
+  if (opportunity.exchange !== "Bybit") throw new Error("Треугольный PAPER-маршрут пока поддерживает только Bybit.");
+  const asset = opportunity.asset;
+  const [btcUsdtBook,assetBtcBook,assetUsdtBook] = await Promise.all([
+    getExecutionOrderBook("Bybit","BTCUSDT"),
+    getExecutionOrderBook("Bybit",asset+"BTC"),
+    getExecutionOrderBook("Bybit",asset+"USDT")
+  ]);
+  const fee = setting(env.BYBIT_TAKER_FEE,0.1,5);
+  const feeFactor = 1-fee/100;
+  if (feeFactor <= 0) throw new Error("Некорректная комиссия Bybit.");
+  let finalUsdt, leg1, leg2, leg3;
+  if (opportunity.direction === "USDT_BTC_ASSET_USDT") {
+    leg1 = consumeAskBook(btcUsdtBook.asks,quoteBudget);
+    const btcAfterFee = leg1.quantity*feeFactor;
+    leg2 = consumeAskBook(assetBtcBook.asks,btcAfterFee);
+    const assetAfterFee = leg2.quantity*feeFactor;
+    leg3 = consumeBidBook(assetUsdtBook.bids,assetAfterFee);
+    finalUsdt = leg3.quoteReceived*feeFactor;
+  } else if (opportunity.direction === "USDT_ASSET_BTC_USDT") {
+    leg1 = consumeAskBook(assetUsdtBook.asks,quoteBudget);
+    const assetAfterFee = leg1.quantity*feeFactor;
+    leg2 = consumeBidBook(assetBtcBook.bids,assetAfterFee);
+    const btcAfterFee = leg2.quoteReceived*feeFactor;
+    leg3 = consumeBidBook(btcUsdtBook.bids,btcAfterFee);
+    finalUsdt = leg3.quoteReceived*feeFactor;
+  } else throw new Error("Неизвестное направление треугольного маршрута.");
+  const pnl = Number((finalUsdt-quoteBudget).toFixed(8));
+  const outcome = pnl > 0.00000001 ? "win" : pnl < -0.00000001 ? "loss" : "draw";
+  const updated = await applyDemoResult(env,chatId,"arbi",pnl,outcome,{
+    type:"triangular_paper_execution",strategy:"triangular",symbol:opportunity.symbol,asset,
+    exchange:"Bybit",buyExchange:"Bybit",sellExchange:"Bybit",route:opportunity.route,direction:opportunity.direction,
+    quoteBudget,feePercent:fee,finalUsdt,pnl,estimatedNetPercent:opportunity.net,
+    leg1Average:leg1.averagePrice,leg2Average:leg2.averagePrice,leg3Average:leg3.averagePrice
+  });
+  return {pnl,outcome,balance:updated.arbi.balance,quoteBudget,finalUsdt,feePercent:fee,route:opportunity.route};
+}
+async function runAutoPaperForUser(env, chatId, state, crossOpportunities, triangularOpportunities) {
+  const now = Date.now();
+  if (!state?.enabled) return;
+  if (now >= Number(state.endsAt)) {
+    await stopAutoPaper(env,chatId,"30-day-test-completed");
+    try { await send(env,chatId,"🏁 <b>30-дневный PAPER-тест A|MORE завершён.</b> Новые виртуальные сделки остановлены. Открой раздел «Сделки», чтобы посмотреть итоговую статистику."); } catch {}
+    return;
+  }
+  if (await env.SUBSCRIBERS.get("user:stop:"+chatId)) return;
+  const lockKey = "auto:paper:lock:"+chatId;
+  if (await env.SUBSCRIBERS.get(lockKey)) return;
+  await env.SUBSCRIBERS.put(lockKey,"1",{expirationTtl:55});
+  try {
+    const dailyCount = await getAutoPaperDailyCount(env,chatId,now);
+    if (dailyCount >= Number(state.maxTradesPerDay || 12)) return;
+    const candidates = [
+      ...crossOpportunities.map(x=>({...x,strategy:"cross_exchange"})),
+      ...triangularOpportunities
+    ].sort((a,b)=>Number(b.net)-Number(a.net));
+    for (const candidate of candidates) {
+      const routeKey = candidate.strategy === "triangular"
+        ? candidate.direction+":"+candidate.asset
+        : candidate.symbol+":"+candidate.buyExchange+":"+candidate.sellExchange;
+      const cooldownKey = "auto:paper:cool:"+chatId+":"+candidate.strategy+":"+routeKey;
+      if (await env.SUBSCRIBERS.get(cooldownKey)) continue;
+      await env.SUBSCRIBERS.put(cooldownKey,"1",{expirationTtl:300});
+      try {
+        const result = candidate.strategy === "triangular"
+          ? await executeTriangularPaper(env,chatId,candidate,Number(state.quoteBudget)||100)
+          : await executeArbitragePaper(env,chatId,candidate,Number(state.quoteBudget)||100);
+        await recordAutoPaperTrade(env,chatId,{outcome:result.outcome,pnl:result.pnl});
+        const route = candidate.strategy === "triangular"
+          ? candidate.route
+          : candidate.buyExchange+" → "+candidate.sellExchange;
+        const label = result.outcome === "win" ? "✅ ВИРТУАЛЬНАЯ СДЕЛКА В ПЛЮС" : result.outcome === "loss" ? "❌ ВИРТУАЛЬНАЯ СДЕЛКА В МИНУС" : "➖ НУЛЕВОЙ РЕЗУЛЬТАТ";
+        const text = "🤖 <b>A|MORE AUTO PAPER</b>\n"+label+"\nСтратегия: <b>"+(candidate.strategy==="triangular"?"Треугольный арбитраж":"Межбиржевой арбитраж")+"</b>\nПара: <b>"+html(candidate.symbol)+"</b>\nМаршрут: "+html(route)+"\nРасчётный net до исполнения: "+Number(candidate.net).toFixed(3)+"%\nP/L после симуляции: <b>"+(result.pnl>0?"+":"")+result.pnl.toFixed(4)+" USDT</b>\nДемо-баланс: <b>"+result.balance.toFixed(2)+" USDT</b>\n<i>Только виртуальное исполнение по публичным стаканам. Реальные ордера отключены.</i>";
+        try { await send(env,chatId,text); } catch (notifyError) { console.error("Auto PAPER notification:",notifyError); }
+        return;
+      } catch (error) {
+        await env.SUBSCRIBERS.put(cooldownKey,"1",{expirationTtl:60});
+        const latest = await readAutoPaper(env,chatId);
+        if (latest) {
+          latest.lastError = String(error?.message || error).slice(0,300);
+          await writeAutoPaper(env,chatId,latest);
+        }
+        console.error("Auto PAPER execution:",chatId,error);
+      }
+    }
+  } finally {
+    await env.SUBSCRIBERS.delete(lockKey);
+  }
+}
+
 async function tg(env, method, body) {
   const r = await fetch("https://api.telegram.org/bot" + env.TELEGRAM_BOT_TOKEN + "/" + method, {
     method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify(body)
@@ -262,11 +365,12 @@ async function tg(env, method, body) {
   return data.result;
 }
 const keyboard = { inline_keyboard: [
-  [{text:"◈ Открыть A|MORE Terminal",web_app:{url:"https://amore-arbitrage.hn29wknr7h.workers.dev/?v=20261121-13"}}],
+  [{text:"◈ Открыть A|MORE Terminal",web_app:{url:"https://amore-arbitrage.hn29wknr7h.workers.dev/?v=20261123-auto-paper-1"}}],
   [{text:"📊 A|MORE Arbitrage — сканировать",callback_data:"scan"}],
   [{text:"📈 A|MORE Signals — выбрать таймфрейм",callback_data:"trade_menu"}],
   [{text:"🧠 AI Committee — быстрый AI-анализ",callback_data:"trade:ai"}],
-  [{text:"💼 Демо-балансы",callback_data:"demo"},{text:"🧾 Статистика",callback_data:"stats"}],
+  [{text:"💼 Демо-балансы",callback_data:"demo"},{text:"🧾 Сделки",callback_data:"deals"}],
+  [{text:"📊 Статистика",callback_data:"stats"}],
   [{text:"🔔 Уведомления: включить",callback_data:"subscribe"},{text:"🔕 выключить",callback_data:"unsubscribe"}],
   [{text:"🧪 Тестовая сделка",callback_data:"arbi_demo"}],
   [{text:"ℹ️ Помощь",callback_data:"help"}]
@@ -382,11 +486,12 @@ async function handle(update, env) {
     const allowedPairs = ["ALL","EURUSD","AUDCAD","AUDCHF","AUDJPY","AUDUSD","CADCHF","CADJPY","CHFJPY","EURAUD","EURCAD","EURCHF","EURGBP","EURJPY","GBPAUD","GBPCAD","GBPCHF","GBPJPY","GBPUSD","USDCAD","USDCHF","USDJPY","BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"];
     if (["1m","3m","5m","auto"].includes(requested) && allowedPairs.includes(pair)) webAction = "trade:" + requested + ":" + pair;
   }
-  if (!webAction && ["stop","resume","demo","stats","scan","help","demo_reset","arbi_demo"].includes(startArg)) webAction = startArg;
+  if (!webAction && ["stop","resume","demo","stats","deals","scan","help","demo_reset","arbi_demo"].includes(startArg)) webAction = startArg;
   const action = cb?.data || webAction;
   if (command === "/stop" || startArg === "stop" || action === "stop") {
     await env.SUBSCRIBERS.put("user:stop:" + chatId, "1");
     await env.SUBSCRIBERS.delete("chat:" + chatId);
+    await stopAutoPaper(env,chatId,"global-stop");
     await send(env, chatId, "🛑 <b>A|MORE STOP включён.</b> Новые демо-прогнозы и автоматические уведомления для этого аккаунта приостановлены. Уже открытый виртуальный прогноз будет рассчитан по экспирации.", {reply_markup:{inline_keyboard:[[{text:"▶️ Возобновить работу",callback_data:"resume"}],[{text:"💼 Демо-счёт",callback_data:"demo"}]]}});
   } else if (command === "/resume" || startArg === "resume" || action === "resume") {
     await env.SUBSCRIBERS.delete("user:stop:" + chatId);
@@ -401,9 +506,21 @@ async function handle(update, env) {
     } catch (e) { await send(env, chatId, "⚠️ Демо-счёт недоступен: " + html(e.message)); }
   } else if (command === "/demo_reset" || action === "demo_reset") {
     try {
+      await stopAutoPaper(env,chatId,"demo-reset");
       const account = await resetDemoAccount(env, chatId);
       await send(env, chatId, "♻️ Оба виртуальных счёта сброшены до 1 000 USDT.\n\n" + formatDemoAccount(account), {reply_markup:keyboard});
     } catch (e) { await send(env, chatId, "⚠️ Не удалось сбросить демо-счета: " + html(e.message)); }
+  } else if (command === "/deals" || action === "deals") {
+    const history = await getDemoHistory(env,chatId);
+    const rows = history.slice(0,10).map((x,i) => {
+      const win = x.outcome === "win", draw = x.outcome === "draw";
+      const label = draw ? "➖" : win ? "✅" : "❌";
+      const strategy = x.type === "triangular_paper_execution" ? "Треугольный" : x.bot === "trading" ? "Signals" : "Межбиржевой";
+      const route = x.route || (x.buyExchange && x.sellExchange ? x.buyExchange+" → "+x.sellExchange : x.direction || "—");
+      const pnl = Number(x.pnl)||0;
+      return (i+1)+". "+label+" <b>"+strategy+" · "+html(x.symbol||"—")+"</b>\n   "+html(route)+" · "+(pnl>0?"+":"")+pnl.toFixed(4)+" USDT";
+    });
+    await send(env,chatId,"🧾 <b>A|MORE — ПОСЛЕДНИЕ СДЕЛКИ</b>\n\n"+(rows.join("\n\n")||"Пока нет завершённых операций.")+"\n\n<i>Полная история и фильтры доступны в A|MORE Terminal → «Сделки».</i>");
   } else if (command === "/stats" || action === "stats") {
     const account = await getDemoAccount(env, chatId);
     const a = account.arbi, t = account.trading;
@@ -480,11 +597,27 @@ async function handle(update, env) {
 async function scheduled(env) {
   if (!env.SUBSCRIBERS) return;
   await settleTradingDemos(env);
-  const list = await env.SUBSCRIBERS.list({prefix:"chat:",limit:1000});
+  const [list,autoList] = await Promise.all([
+    env.SUBSCRIBERS.list({prefix:"chat:",limit:1000}),
+    env.SUBSCRIBERS.list({prefix:"auto:paper:state:",limit:1000})
+  ]);
+  if (!list.keys.length && !autoList.keys.length) return;
+  let data = {opportunities:[]};
+  try { data = await scan(env); } catch (e) { console.error("Scheduled scan:",e); }
+  let triangular = [];
+  if (autoList.keys.length) {
+    try { triangular = await scanTriangular(env); }
+    catch (e) { console.error("Scheduled triangular scan:",e); }
+  }
+  for (const item of autoList.keys) {
+    const chatId = item.name.slice("auto:paper:state:".length);
+    const state = await readAutoPaper(env,chatId);
+    if (state?.enabled) {
+      await runAutoPaperForUser(env,chatId,state,data.opportunities||[],triangular);
+    }
+  }
   if (!list.keys.length) return;
-  let data;
-  try { data = await scan(env); } catch (e) { console.error("Scheduled scan:",e); return; }
-  for (const x of data.opportunities) {
+  for (const x of data.opportunities||[]) {
     const key = "alert:" + x.symbol + ":" + x.buyExchange + ":" + x.sellExchange;
     if (await env.SUBSCRIBERS.get(key)) continue;
     await env.SUBSCRIBERS.put(key,"1",{expirationTtl:300});
@@ -496,7 +629,7 @@ async function scheduled(env) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (request.method === "GET" && url.pathname === "/health") return Response.json({ok:true,service:"A|More Arbitrage",version:"0.2.0-ai-committee"});
+    if (request.method === "GET" && url.pathname === "/health") return Response.json({ok:true,service:"A|More Arbitrage",version:"0.3.0-auto-paper"});
     if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/app" || url.pathname === "/app/")) {
       const assetUrl = new URL("/index.html", url.origin);
       return env.ASSETS ? env.ASSETS.fetch(new Request(assetUrl, request)) : new Response("Mini App assets are not configured",{status:503});
@@ -517,6 +650,7 @@ export default {
         if (legacyTradeRaw) { try { activeTrades.push(JSON.parse(legacyTradeRaw)); } catch {} }
         activeTrades.sort((a,b)=>Number(b.openedAt||b.entryAt||0)-Number(a.openedAt||a.entryAt||0));
         const history = await getDemoHistory(env, chatId);
+        const autoPaper = await readAutoPaper(env,chatId);
         const usageDay = new Date().toISOString().slice(0,10);
         const usageKeys = await env.SUBSCRIBERS.list({prefix:"ai:usage:"+chatId+":"+usageDay+":",limit:1000});
         const usageRows = (await Promise.all(usageKeys.keys.map(async key => {
@@ -534,7 +668,7 @@ export default {
         aiUsage.neurons=Number(aiUsage.neurons.toFixed(6));
         aiUsage.remainingNeurons=Math.max(0,10000-aiUsage.neurons);
         aiUsage.rows=usageRows.slice(0,20);
-        return Response.json({account,history,activeTrade:activeTrades[0]||null,activeTrades,aiUsage,stopped:!!(await env.SUBSCRIBERS.get("user:stop:" + chatId))},{headers:{"cache-control":"no-store"}});
+        return Response.json({account,history,activeTrade:activeTrades[0]||null,activeTrades,aiUsage,autoPaper,stopped:!!(await env.SUBSCRIBERS.get("user:stop:" + chatId))},{headers:{"cache-control":"no-store"}});
       } catch(e) { return Response.json({error:e.message},{status:401,headers:{"cache-control":"no-store"}}); }
     }
     if (url.pathname === "/api/signal" && request.method === "POST") {
@@ -565,12 +699,14 @@ export default {
         const chatId = await telegramMiniAppUser(request, env);
         await env.SUBSCRIBERS.put("user:stop:" + chatId, "1");
         await env.SUBSCRIBERS.delete("chat:" + chatId);
+        await stopAutoPaper(env,chatId,"global-stop");
         return Response.json({ok:true,stopped:true});
       } catch(e) { return Response.json({error:e.message},{status:401}); }
     }
     if (url.pathname === "/api/reset" && request.method === "POST") {
       try {
         const chatId = await telegramMiniAppUser(request, env);
+        await stopAutoPaper(env,chatId,"demo-reset");
         const account = await resetDemoAccount(env, chatId);
         return Response.json({ok:true,account},{headers:{"cache-control":"no-store"}});
       } catch(e) { return Response.json({error:e.message},{status:401}); }
@@ -581,6 +717,21 @@ export default {
         await env.SUBSCRIBERS.delete("user:stop:" + chatId);
         return Response.json({ok:true,stopped:false});
       } catch(e) { return Response.json({error:e.message},{status:401}); }
+    }
+    if (url.pathname === "/api/auto-paper/start" && request.method === "POST") {
+      try {
+        const chatId = await telegramMiniAppUser(request,env);
+        if (await env.SUBSCRIBERS.get("user:stop:"+chatId)) return Response.json({error:"Сначала отключи общий STOP."},{status:423});
+        const autoPaper = await startAutoPaper(env,chatId);
+        return Response.json({ok:true,autoPaper},{headers:{"cache-control":"no-store"}});
+      } catch(e) { return Response.json({error:e.message},{status:400,headers:{"cache-control":"no-store"}}); }
+    }
+    if (url.pathname === "/api/auto-paper/stop" && request.method === "POST") {
+      try {
+        const chatId = await telegramMiniAppUser(request,env);
+        const autoPaper = await stopAutoPaper(env,chatId,"user-request");
+        return Response.json({ok:true,autoPaper},{headers:{"cache-control":"no-store"}});
+      } catch(e) { return Response.json({error:e.message},{status:401,headers:{"cache-control":"no-store"}}); }
     }
     if (request.method === "GET" && url.pathname === "/api/dashboard") {
       try { return Response.json(await dashboard(env), {headers:{"cache-control":"no-store"} }); }
