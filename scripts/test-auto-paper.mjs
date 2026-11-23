@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { AutoPaperState, calculateTriangularOpportunities } from "../src/auto-paper.js";
+import { AutoPaperState, calculateTriangularOpportunities, applyAdverseSlippage, executionLatencyAllowed } from "../src/auto-paper.js";
 
 const tickers = [
   {symbol:"BTCUSDT",bid1Price:"99900",ask1Price:"100000",bid1Size:"10",ask1Size:"10"},
@@ -52,3 +52,13 @@ assert.equal((await (await doRequest("daily-count",{day:"2026-11-23",legacyCount
 assert.equal((await (await doRequest("increment-daily",{day:"2026-11-23",legacyCount:0})).json()).count,3);
 assert.equal((await (await doRequest("daily-count",{day:"2026-11-23",legacyCount:0})).json()).count,3);
 process.stdout.write("A|MORE Durable Object state tests passed\n");
+
+const askStress = applyAdverseSlippage([[100,2],[101,3]],"buy",10);
+assert.equal(askStress[0][0],100.1);
+assert.ok(Math.abs(askStress[1][0]-101.101)<1e-9);
+const bidStress = applyAdverseSlippage([[100,2]],"sell",10);
+assert.equal(bidStress[0][0],99.9);
+assert.equal(executionLatencyAllowed(4999,5000),true);
+assert.equal(executionLatencyAllowed(5001,5000),false);
+assert.equal(executionLatencyAllowed(-1,5000),false);
+process.stdout.write("A|MORE execution realism tests passed\n");
