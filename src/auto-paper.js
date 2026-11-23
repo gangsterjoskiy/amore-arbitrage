@@ -52,7 +52,9 @@ export async function startAutoPaper(env, chatId, now = Date.now()) {
     strategies: ["cross_exchange", "triangular"],
     startedAt: now,
     endsAt: now + 30 * DAY_MS,
-    quoteBudget: 100,
+    startingCapital: 10,
+    paperCapital: 10,
+    quoteBudget: 10,
     maxTradesPerDay: 12,
     tradeCount: 0,
     wins: 0,
@@ -84,6 +86,14 @@ export async function recordAutoPaperTrade(env, chatId, trade) {
   else if (trade.outcome === "loss") state.losses = (Number(state.losses) || 0) + 1;
   else state.draws = (Number(state.draws) || 0) + 1;
   state.pnl = Number(((Number(state.pnl) || 0) + Number(trade.pnl || 0)).toFixed(8));
+  state.startingCapital = Number(state.startingCapital) || 10;
+  state.paperCapital = Number(((Number(state.paperCapital) || state.startingCapital) + Number(trade.pnl || 0)).toFixed(8));
+  state.quoteBudget = Math.max(0, state.paperCapital);
+  if (state.paperCapital <= 0.01) {
+    state.enabled = false;
+    state.stopReason = "paper-capital-depleted";
+    state.stoppedAt = Date.now();
+  }
   state.lastTradeAt = Date.now();
   state.lastError = null;
   await writeAutoPaper(env, chatId, state);
@@ -207,4 +217,16 @@ export function calculateTriangularOpportunities(tickers, options = {}) {
     }
   }
   return opportunities.sort((a, b) => b.net - a.net);
+}
+
+// Conservative execution stress: worsen every consumed book level rather than
+// assuming the displayed quote remains available at the instant of execution.
+export function applyAdverseSlippage(levels, side, bps = 10) {
+  const rate = Math.max(0, Math.min(500, Number(bps) || 0)) / 10000;
+  const factor = side === "buy" ? 1 + rate : 1 - rate;
+  return (Array.isArray(levels) ? levels : []).map(([price, quantity]) => [Number(price) * factor, Number(quantity)]);
+}
+
+export function executionLatencyAllowed(latencyMs, maxLatencyMs = 5000) {
+  return Number.isFinite(Number(latencyMs)) && Number(latencyMs) >= 0 && Number(latencyMs) <= Number(maxLatencyMs);
 }
