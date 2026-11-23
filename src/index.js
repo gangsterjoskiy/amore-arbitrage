@@ -370,7 +370,15 @@ async function runAutoPaperForUser(env, chatId, state, crossOpportunities, trian
           ? candidate.route
           : candidate.buyExchange+" → "+candidate.sellExchange;
         const label = result.outcome === "win" ? "✅ ВИРТУАЛЬНАЯ СДЕЛКА В ПЛЮС" : result.outcome === "loss" ? "❌ ВИРТУАЛЬНАЯ СДЕЛКА В МИНУС" : "➖ НУЛЕВОЙ РЕЗУЛЬТАТ";
-        const text = "🤖 <b>A|MORE AUTO PAPER</b>\n"+label+"\nСтратегия: <b>"+(candidate.strategy==="triangular"?"Треугольный арбитраж":"Межбиржевой арбитраж")+"</b>\nПара: <b>"+html(candidate.symbol)+"</b>\nМаршрут: "+html(route)+"\nРасчётный net до исполнения: "+Number(candidate.net).toFixed(3)+"%\nP/L после симуляции: <b>"+(result.pnl>0?"+":"")+result.pnl.toFixed(4)+" USDT</b>\nДемо-баланс: <b>"+result.balance.toFixed(2)+" USDT</b>\n<i>Только виртуальное исполнение по публичным стаканам. Реальные ордера отключены.</i>";
+        const text = "🤖 <b>A|MORE AUTO PAPER</b>
+"+label+"
+Стратегия: <b>"+(candidate.strategy==="triangular"?"Треугольный арбитраж":"Межбиржевой арбитраж")+"</b>
+Пара: <b>"+html(candidate.symbol)+"</b>
+Маршрут: "+html(route)+"
+Расчётный net до исполнения: "+Number(candidate.net).toFixed(3)+"%
+P/L после симуляции: <b>"+(result.pnl>0?"+":"")+result.pnl.toFixed(4)+" USDT</b>
+Демо-баланс: <b>"+result.balance.toFixed(2)+" USDT</b>
+<i>Только виртуальное исполнение по публичным стаканам. Реальные ордера отключены.</i>";
         try { await send(env,chatId,text); } catch (notifyError) { console.error("Auto PAPER notification:",notifyError); }
         return;
       } catch (error) {
@@ -426,34 +434,61 @@ async function recordAIUsage(env, chatId, committee, meta = {}) {
   return true;
 }
 function help() {
-  return "🧭 <b>A|MORE — главное меню</b>\n\n<b>📊 A|MORE Arbitrage</b> — сравнение цен на спотовых биржах и расчёт net-спреда.\n<b>📈 A|MORE Signals</b> — алгоритмический анализ минутных свечей. <b>🧠 AI Committee</b> — четыре аналитические роли и главный арбитр.\n<b>💼 Демо-балансы</b> — отдельные виртуальные счета двух модулей.\n<b>🧾 Статистика</b> — результаты тестирования.\n\nВсе сделки виртуальные. Межбиржевой спред не означает, что ордера реально исполнимы. Точность сигналов не подтверждена статистически. Для управления используй кнопки меню ниже.";
+  return "🧭 <b>A|MORE — главное меню</b>
+
+<b>📊 A|MORE Arbitrage</b> — сравнение цен на спотовых биржах и расчёт net-спреда.
+<b>📈 A|MORE Signals</b> — алгоритмический анализ минутных свечей. <b>🧠 AI Committee</b> — четыре аналитические роли и главный арбитр.
+<b>💼 Демо-балансы</b> — отдельные виртуальные счета двух модулей.
+<b>🧾 Статистика</b> — результаты тестирования.
+
+Все сделки виртуальные. Межбиржевой спред не означает, что ордера реально исполнимы. Точность сигналов не подтверждена статистически. Для управления используй кнопки меню ниже.";
 }
 function minDepthFallback(env) { return setting(env.MIN_TOP_OF_BOOK_DEPTH_USDT,25,1000000); }
 function report(data, env) {
   const threshold = setting(env.MIN_NET_SPREAD_PERCENT, 0.25, 20);
-  let out = "🟢 <b>A|MORE ARBITRAGE</b>\n<i>Spot USDT • публичные котировки</i>\n";
-  out += "Биржи онлайн: <b>" + html(data.exchanges.join(", ")) + "</b>\nПорог net: <b>" + threshold.toFixed(2) + "%</b>\n\n";
+  let out = "🟢 <b>A|MORE ARBITRAGE</b>
+<i>Spot USDT • публичные котировки</i>
+";
+  out += "Биржи онлайн: <b>" + html(data.exchanges.join(", ")) + "</b>
+Порог net: <b>" + threshold.toFixed(2) + "%</b>
+
+";
   if (!data.opportunities.length) {
     const d = data.diagnostics || {};
-    out += "Пока нет возможностей выше порога. Бот не будет придумывать сигналы.\n\n";
-    out += "Совпадающих пар между биржами: <b>" + (d.sharedPairs ?? 0) + "</b>\n";
-    out += "Отсеяно по глубине стакана: <b>" + (d.depthRejected ?? 0) + "</b> (минимум ~$" + (d.minDepth ?? minDepthFallback(env)) + ")\n";
+    out += "Пока нет возможностей выше порога. Бот не будет придумывать сигналы.
+
+";
+    out += "Совпадающих пар между биржами: <b>" + (d.sharedPairs ?? 0) + "</b>
+";
+    out += "Отсеяно по глубине стакана: <b>" + (d.depthRejected ?? 0) + "</b> (минимум ~$" + (d.minDepth ?? minDepthFallback(env)) + ")
+";
     if (d.bestBeforeThreshold) {
       const b=d.bestBeforeThreshold;
-      out += "Лучший net до фильтра: <b>" + b.net.toFixed(3) + "%</b> — " + html(b.symbol) + " (" + html(b.buyExchange) + " → " + html(b.sellExchange) + ")\n";
-      out += "До заданного порога не хватает " + Math.max(0,d.minNet-b.net).toFixed(3) + " п.п.\n";
-    } else out += "Не удалось получить пригодную общую пару с корректными котировками.\n";
+      out += "Лучший net до фильтра: <b>" + b.net.toFixed(3) + "%</b> — " + html(b.symbol) + " (" + html(b.buyExchange) + " → " + html(b.sellExchange) + ")
+";
+      out += "До заданного порога не хватает " + Math.max(0,d.minNet-b.net).toFixed(3) + " п.п.
+";
+    } else out += "Не удалось получить пригодную общую пару с корректными котировками.
+";
   }
   for (let i = 0; i < data.opportunities.length; i++) {
     const x = data.opportunities[i];
-    out += "<b>" + (i+1) + ". " + html(x.symbol.replace("USDT","/USDT")) + "</b>\n";
-    out += "Купить: <b>" + price(x.buy) + "</b> • " + html(x.buyExchange) + "\n";
-    out += "Продать: <b>" + price(x.sell) + "</b> • " + html(x.sellExchange) + "\n";
-    out += "Спред: " + x.gross.toFixed(3) + "% gross → <b>+" + x.net.toFixed(3) + "% net</b>\n";
-    out += "Комиссии: " + x.buyFee.toFixed(3) + "% + " + x.sellFee.toFixed(3) + "% • глубина лучших цен: ~$" + Math.floor(x.depth).toLocaleString("en-US") + "\n\n";
+    out += "<b>" + (i+1) + ". " + html(x.symbol.replace("USDT","/USDT")) + "</b>
+";
+    out += "Купить: <b>" + price(x.buy) + "</b> • " + html(x.buyExchange) + "
+";
+    out += "Продать: <b>" + price(x.sell) + "</b> • " + html(x.sellExchange) + "
+";
+    out += "Спред: " + x.gross.toFixed(3) + "% gross → <b>+" + x.net.toFixed(3) + "% net</b>
+";
+    out += "Комиссии: " + x.buyFee.toFixed(3) + "% + " + x.sellFee.toFixed(3) + "% • глубина лучших цен: ~$" + Math.floor(x.depth).toLocaleString("en-US") + "
+
+";
   }
-  if (data.errors.length) out += "⚠️ Биржи с ошибкой: " + html(data.errors.join("; ")) + "\n";
-  out += "\n<i>Не учитывает вывод, перевод, проскальзывание, задержки и ограничения аккаунта. Проверяй стакан перед любой сделкой.</i>";
+  if (data.errors.length) out += "⚠️ Биржи с ошибкой: " + html(data.errors.join("; ")) + "
+";
+  out += "
+<i>Не учитывает вывод, перевод, проскальзывание, задержки и ограничения аккаунта. Проверяй стакан перед любой сделкой.</i>";
   return out;
 }
 async function runScan(env, chatId) {
@@ -472,7 +507,8 @@ async function telegramMiniAppUser(request, env) {
   const receivedHash = params.get("hash");
   const authDate = Number(params.get("auth_date"));
   if (!receivedHash || !Number.isFinite(authDate) || Math.abs(Date.now()/1000-authDate) > 86400) throw new Error("Сессия Telegram устарела. Закрой и снова открой Mini App.");
-  const checkString = [...params.entries()].filter(([key]) => key !== "hash").sort(([a],[b]) => a < b ? -1 : a > b ? 1 : 0).map(([key,value]) => key + "=" + value).join("\n");
+  const checkString = [...params.entries()].filter(([key]) => key !== "hash").sort(([a],[b]) => a < b ? -1 : a > b ? 1 : 0).map(([key,value]) => key + "=" + value).join("
+");
   const encoder = new TextEncoder();
   const secretBase = await crypto.subtle.importKey("raw", encoder.encode("WebAppData"), {name:"HMAC",hash:"SHA-256"}, false, ["sign"]);
   const secret = await crypto.subtle.sign("HMAC", secretBase, encoder.encode(env.TELEGRAM_BOT_TOKEN));
@@ -540,7 +576,9 @@ async function handle(update, env) {
     try {
       await stopAutoPaper(env,chatId,"demo-reset");
       const account = await resetDemoAccount(env, chatId);
-      await send(env, chatId, "♻️ Оба виртуальных счёта сброшены до 1 000 USDT.\n\n" + formatDemoAccount(account), {reply_markup:keyboard});
+      await send(env, chatId, "♻️ Оба виртуальных счёта сброшены до 1 000 USDT.
+
+" + formatDemoAccount(account), {reply_markup:keyboard});
     } catch (e) { await send(env, chatId, "⚠️ Не удалось сбросить демо-счета: " + html(e.message)); }
   } else if (command === "/deals" || action === "deals") {
     const history = await getDemoHistory(env,chatId);
@@ -550,9 +588,16 @@ async function handle(update, env) {
       const strategy = x.type === "triangular_paper_execution" ? "Треугольный" : x.bot === "trading" ? "Signals" : "Межбиржевой";
       const route = x.route || (x.buyExchange && x.sellExchange ? x.buyExchange+" → "+x.sellExchange : x.direction || "—");
       const pnl = Number(x.pnl)||0;
-      return (i+1)+". "+label+" <b>"+strategy+" · "+html(x.symbol||"—")+"</b>\n   "+html(route)+" · "+(pnl>0?"+":"")+pnl.toFixed(4)+" USDT";
+      return (i+1)+". "+label+" <b>"+strategy+" · "+html(x.symbol||"—")+"</b>
+   "+html(route)+" · "+(pnl>0?"+":"")+pnl.toFixed(4)+" USDT";
     });
-    await send(env,chatId,"🧾 <b>A|MORE — ПОСЛЕДНИЕ СДЕЛКИ</b>\n\n"+(rows.join("\n\n")||"Пока нет завершённых операций.")+"\n\n<i>Полная история и фильтры доступны в A|MORE Terminal → «Сделки».</i>");
+    await send(env,chatId,"🧾 <b>A|MORE — ПОСЛЕДНИЕ СДЕЛКИ</b>
+
+"+(rows.join("
+
+")||"Пока нет завершённых операций.")+"
+
+<i>Полная история и фильтры доступны в A|MORE Terminal → «Сделки».</i>");
   } else if (command === "/stats" || action === "stats") {
     const account = await getDemoAccount(env, chatId);
     const a = account.arbi, t = account.trading;
@@ -561,9 +606,27 @@ async function handle(update, env) {
     const usageKeys = await env.SUBSCRIBERS.list({prefix:"ai:usage:"+chatId+":"+usageDay+":",limit:1000});
     let aiRequests=0,aiNeurons=0,aiPrompt=0,aiCompletion=0;
     for(const key of usageKeys.keys){const raw=await env.SUBSCRIBERS.get(key.name);if(!raw)continue;try{const row=JSON.parse(raw);aiRequests++;aiNeurons+=Number(row.neurons)||0;aiPrompt+=Number(row.promptTokens)||0;aiCompletion+=Number(row.completionTokens)||0;}catch{}}
-    await send(env, chatId, "📊 <b>A|MORE — СТАТИСТИКА ДЕМО</b>\n\n<b>A|MORE Arbitrage</b>\nРасчётных сделок: " + a.trades + "\nМодельный P/L: " + (a.pnl > 0 ? "+" : "") + a.pnl.toFixed(2) + " USDT\n\n<b>A|MORE Signals</b>\nПрогнозов: " + t.trades + "\nУспешных: " + t.wins + " • Неуспешных: " + t.losses + " • Ничьих: " + t.draws + "\nДоля успешных: " + pct(t) + "\nP/L: " + (t.pnl > 0 ? "+" : "") + t.pnl.toFixed(2) + " USDT\n\n<b>AI Committee сегодня</b>\nЗапросов с учтённым расходом: " + aiRequests + "\nТокены: " + aiPrompt + " вход / " + aiCompletion + " выход\nРасход: " + aiNeurons.toFixed(2) + " / 10 000 Neurons\n\n<i>Учёт по usage-метаданным ответа модели; таймауты без ответа могут не попасть в счётчик. Демо-статистика не доказывает преимущество стратегии.</i>");
+    await send(env, chatId, "📊 <b>A|MORE — СТАТИСТИКА ДЕМО</b>
+
+<b>A|MORE Arbitrage</b>
+Расчётных сделок: " + a.trades + "
+Модельный P/L: " + (a.pnl > 0 ? "+" : "") + a.pnl.toFixed(2) + " USDT
+
+<b>A|MORE Signals</b>
+Прогнозов: " + t.trades + "
+Успешных: " + t.wins + " • Неуспешных: " + t.losses + " • Ничьих: " + t.draws + "
+Доля успешных: " + pct(t) + "
+P/L: " + (t.pnl > 0 ? "+" : "") + t.pnl.toFixed(2) + " USDT
+
+<b>AI Committee сегодня</b>
+Запросов с учтённым расходом: " + aiRequests + "
+Токены: " + aiPrompt + " вход / " + aiCompletion + " выход
+Расход: " + aiNeurons.toFixed(2) + " / 10 000 Neurons
+
+<i>Учёт по usage-метаданным ответа модели; таймауты без ответа могут не попасть в счётчик. Демо-статистика не доказывает преимущество стратегии.</i>");
   } else if (action === "trade_menu") {
-    await send(env, chatId, "📈 <b>A|MORE Signals</b>\nВыбери период свечей. В режиме «Авто» бот проверит M1/M3/M5 и потребует совпадения минимум двух периодов. В Telegram по умолчанию анализируется EURUSD; другой актив выбери в A|MORE Terminal.", {reply_markup:{inline_keyboard:[[{text:"⚡ ATM · быстрый прогноз",callback_data:"trade:atm"}],[{text:"⚡ M1 · 1 мин",callback_data:"trade:1m"},{text:"🎯 M3 · 3 мин",callback_data:"trade:3m"},{text:"🎯 M5 · 5 мин",callback_data:"trade:5m"}],[{text:"🤖 Авто · все периоды",callback_data:"trade:auto"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]}});
+    await send(env, chatId, "📈 <b>A|MORE Signals</b>
+Выбери период свечей. В режиме «Авто» бот проверит M1/M3/M5 и потребует совпадения минимум двух периодов. В Telegram по умолчанию анализируется EURUSD; другой актив выбери в A|MORE Terminal.", {reply_markup:{inline_keyboard:[[{text:"⚡ ATM · быстрый прогноз",callback_data:"trade:atm"}],[{text:"⚡ M1 · 1 мин",callback_data:"trade:1m"},{text:"🎯 M3 · 3 мин",callback_data:"trade:3m"},{text:"🎯 M5 · 5 мин",callback_data:"trade:5m"}],[{text:"🤖 Авто · все периоды",callback_data:"trade:auto"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]}});
   } else if (command === "/trade" || action === "trade" || action?.startsWith("trade:")) {
     const tradeParts = action?.startsWith("trade:") ? action.slice(6).split(":") : ["auto","EURUSD"];
     const atmMode = tradeParts[0] === "atm";
@@ -582,9 +645,20 @@ async function handle(update, env) {
         if (committee) await recordAIUsage(env,chatId,committee,{symbol:result.trade?.symbol||pair,direction:result.trade?.direction||committee.verdict?.direction});
       }
       if (result.none) {
-        const diag = (result.diagnostics || []).map(x => "<b>" + html(x.symbol) + " · " + html(x.timeframe) + "</b>: EMA " + html(x.ema) + ", RSI " + x.rsi + ", свеча " + html(x.candle) + ", ADX " + (x.adx ?? "—") + ", подтверждения " + x.score + "/6" + (x.rejection ? " · " + html(x.rejection) : "")).join("\n");
-        const errors = result.errors?.length ? "\n\n⚠️ Ошибки данных:\n" + html(result.errors.join("\n")) : "";
-        await send(env, chatId, atmMode ? "⚠️ <b>ATM: сейчас не удалось получить пригодные рыночные свечи.</b> Направление не буду выдумывать без котировок.\nПроверены: " + label + "." + errors : "⏸ <b>A|MORE Signals: подтверждённого сигнала пока нет.</b>\nПроверены: " + label + ". Фильтры не ослаблялись. Диагностика:\n\n" + (diag || "Недостаточно данных для анализа.") + errors + "\n\nМожно выбрать другой период или режим «Авто». Сигналы не генерируются искусственно.", {reply_markup:{inline_keyboard:[[{text:"⚡ M1",callback_data:"trade:1m"},{text:"🎯 M3",callback_data:"trade:3m"},{text:"📊 M5",callback_data:"trade:5m"}],[{text:"🤖 Проверить все периоды",callback_data:"trade:auto"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]}});
+        const diag = (result.diagnostics || []).map(x => "<b>" + html(x.symbol) + " · " + html(x.timeframe) + "</b>: EMA " + html(x.ema) + ", RSI " + x.rsi + ", свеча " + html(x.candle) + ", ADX " + (x.adx ?? "—") + ", подтверждения " + x.score + "/6" + (x.rejection ? " · " + html(x.rejection) : "")).join("
+");
+        const errors = result.errors?.length ? "
+
+⚠️ Ошибки данных:
+" + html(result.errors.join("
+")) : "";
+        await send(env, chatId, atmMode ? "⚠️ <b>ATM: сейчас не удалось получить пригодные рыночные свечи.</b> Направление не буду выдумывать без котировок.
+Проверены: " + label + "." + errors : "⏸ <b>A|MORE Signals: подтверждённого сигнала пока нет.</b>
+Проверены: " + label + ". Фильтры не ослаблялись. Диагностика:
+
+" + (diag || "Недостаточно данных для анализа.") + errors + "
+
+Можно выбрать другой период или режим «Авто». Сигналы не генерируются искусственно.", {reply_markup:{inline_keyboard:[[{text:"⚡ M1",callback_data:"trade:1m"},{text:"🎯 M3",callback_data:"trade:3m"},{text:"📊 M5",callback_data:"trade:5m"}],[{text:"🤖 Проверить все периоды",callback_data:"trade:auto"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]}});
       } else await send(env, chatId, formatOpenTrade(result.trade), {reply_markup:{inline_keyboard:[[{text:"🔄 Новый анализ",callback_data:"trade_menu"}],[{text:"⬅️ Главное меню",callback_data:"help"}]]}});
     } catch (e) { await send(env, chatId, "⚠️ Не удалось открыть демо-прогноз: " + html(e.message)); }
   } else if (action?.startsWith("arbi_trade:")) {
@@ -602,7 +676,17 @@ async function handle(update, env) {
       const result = await executeArbitragePaper(env,chatId,opportunity,100);
       const sign = result.pnl>0?"+":"";
       const label = result.outcome==="win"?"✅ ДЕМО-СДЕЛКА В ПЛЮС":result.outcome==="loss"?"❌ ДЕМО-СДЕЛКА В МИНУС":"➖ БЕЗ РЕЗУЛЬТАТА";
-      await send(env,chatId,"💱 <b>A|MORE ARBITRAGE — PAPER EXECUTION</b>\n"+label+"\nПара: <b>"+html(symbol)+"</b>\nКупить: "+html(buyExchange)+" · средняя цена "+price(result.buy.averagePrice)+"\nПродать: "+html(sellExchange)+" · средняя цена "+price(result.sell.averagePrice)+"\nОбъём: "+result.quantity.toFixed(8)+" "+html(symbol.replace("USDT",""))+" (~"+result.quoteBudget.toFixed(2)+" USDT)\nКомиссии: "+result.buyFee.toFixed(3)+"% + "+result.sellFee.toFixed(3)+"%\nИтог после комиссий: <b>"+sign+result.pnl.toFixed(4)+" USDT</b>\nДемо-баланс: <b>"+result.balance.toFixed(2)+" USDT</b>\n\n<i>Симуляция по текущим стаканам и средней цене исполнения. Предполагается заранее размещённый инвентарь на обеих биржах; перевод активов не моделируется. Реальные ордера не отправляются.</i>");
+      await send(env,chatId,"💱 <b>A|MORE ARBITRAGE — PAPER EXECUTION</b>
+"+label+"
+Пара: <b>"+html(symbol)+"</b>
+Купить: "+html(buyExchange)+" · средняя цена "+price(result.buy.averagePrice)+"
+Продать: "+html(sellExchange)+" · средняя цена "+price(result.sell.averagePrice)+"
+Объём: "+result.quantity.toFixed(8)+" "+html(symbol.replace("USDT",""))+" (~"+result.quoteBudget.toFixed(2)+" USDT)
+Комиссии: "+result.buyFee.toFixed(3)+"% + "+result.sellFee.toFixed(3)+"%
+Итог после комиссий: <b>"+sign+result.pnl.toFixed(4)+" USDT</b>
+Демо-баланс: <b>"+result.balance.toFixed(2)+" USDT</b>
+
+<i>Симуляция по текущим стаканам и средней цене исполнения. Предполагается заранее размещённый инвентарь на обеих биржах; перевод активов не моделируется. Реальные ордера не отправляются.</i>");
     } catch(e) { await send(env,chatId,"⚠️ Демо-исполнение не состоялось: "+html(e.message)); }
   } else if (command === "/arbi_demo" || action === "arbi_demo") {
     await send(env,chatId,"🔎 Ищу лучшую возможность и проверяю глубину стаканов…");
@@ -613,10 +697,19 @@ async function handle(update, env) {
       if (!best) throw new Error("Нет возможности выше порога net-спреда.");
       const result = await executeArbitragePaper(env,chatId,best,100);
       const sign = result.pnl>0?"+":"";
-      await send(env,chatId,"💱 <b>A|MORE ARBITRAGE — PAPER EXECUTION</b>\nПара: <b>"+html(best.symbol)+"</b>\nКупить: "+html(best.buyExchange)+" · "+price(result.buy.averagePrice)+"\nПродать: "+html(best.sellExchange)+" · "+price(result.sell.averagePrice)+"\nИтог после комиссий: <b>"+sign+result.pnl.toFixed(4)+" USDT</b>\nДемо-баланс: <b>"+result.balance.toFixed(2)+" USDT</b>\n<i>Исполнение смоделировано по текущим стаканам; реальные ордера не отправляются.</i>");
+      await send(env,chatId,"💱 <b>A|MORE ARBITRAGE — PAPER EXECUTION</b>
+Пара: <b>"+html(best.symbol)+"</b>
+Купить: "+html(best.buyExchange)+" · "+price(result.buy.averagePrice)+"
+Продать: "+html(best.sellExchange)+" · "+price(result.sell.averagePrice)+"
+Итог после комиссий: <b>"+sign+result.pnl.toFixed(4)+" USDT</b>
+Демо-баланс: <b>"+result.balance.toFixed(2)+" USDT</b>
+<i>Исполнение смоделировано по текущим стаканам; реальные ордера не отправляются.</i>");
     } catch(e) { await send(env,chatId,"⚠️ Демо-сделка не состоялась: "+html(e.message)); }
   } else if (["/start","/help"].includes(command) || action === "help") {
-    await send(env, chatId, "⚡ <b>Добро пожаловать в A|MORE ARBITRAGE</b>\nСканер межбиржевых расхождений цен.\n\n" + help(), {reply_markup:keyboard});
+    await send(env, chatId, "⚡ <b>Добро пожаловать в A|MORE ARBITRAGE</b>
+Сканер межбиржевых расхождений цен.
+
+" + help(), {reply_markup:keyboard});
   } else if (command === "/scan" || action === "scan") await runScan(env, chatId);
   else if (command === "/subscribe" || action === "subscribe") {
     if (!env.SUBSCRIBERS) await send(env, chatId, "Хранилище подписок пока не подключено. Используй /scan.");
@@ -653,12 +746,19 @@ async function scheduled(env) {
     const key = "alert:" + x.symbol + ":" + x.buyExchange + ":" + x.sellExchange;
     if (await env.SUBSCRIBERS.get(key)) continue;
     await env.SUBSCRIBERS.put(key,"1",{expirationTtl:300});
-    const message = "🚨 <b>A|MORE — новая возможность</b>\n<b>" + html(x.symbol) + "</b>\nКупить: " + price(x.buy) + " • " + html(x.buyExchange) + "\nПродать: " + price(x.sell) + " • " + html(x.sellExchange) + "\nРасчётный net: <b>+" + x.net.toFixed(3) + "%</b>\n<i>Нажми «Сделка» для проверки стаканов и виртуального исполнения обеих сторон.</i>";
+    const message = "🚨 <b>A|MORE — новая возможность</b>
+<b>" + html(x.symbol) + "</b>
+Купить: " + price(x.buy) + " • " + html(x.buyExchange) + "
+Продать: " + price(x.sell) + " • " + html(x.sellExchange) + "
+Расчётный net: <b>+" + x.net.toFixed(3) + "%</b>
+<i>Нажми «Сделка» для проверки стаканов и виртуального исполнения обеих сторон.</i>";
     const reply_markup = {inline_keyboard:[[{text:"💱 Сделка · PAPER",callback_data:"arbi_trade:"+x.symbol+":"+x.buyExchange+":"+x.sellExchange}],[{text:"🔄 Обновить сканирование",callback_data:"scan"}]]};
     await Promise.allSettled(list.keys.map(k => send(env,k.name.slice(5),message,{reply_markup})));
   }
 }
-export { AutoPaperState };\n\nexport default {
+export { AutoPaperState };
+
+export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") return Response.json({ok:true,service:"A|More Arbitrage",version:"0.3.0-auto-paper"});
