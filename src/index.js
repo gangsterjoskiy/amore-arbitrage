@@ -250,7 +250,7 @@ async function executeArbitragePaper(env, chatId, opportunity, quoteBudget = 100
   const updated = await applyDemoResult(env,chatId,"arbi",pnl,outcome,{
     type:"arbitrage_paper_execution",symbol:opportunity.symbol,buyExchange:opportunity.buyExchange,sellExchange:opportunity.sellExchange,
     quoteBudget,quantity:buy.quantity,buyAverage:buy.averagePrice,sellAverage:sell.averagePrice,
-    buyFee,sellFee,buyCost,sellProceeds,pnl
+    buyFee,sellFee,buyCost,sellProceeds,net:opportunity.net,pnl
   });
   return {buy,sell,buyFee,sellFee,buyCost,sellProceeds,pnl,outcome,balance:updated.arbi.balance,quantity:buy.quantity,quoteBudget};
 }
@@ -338,7 +338,7 @@ async function runAutoPaperForUser(env, chatId, state, crossOpportunities, trian
           ? candidate.route
           : candidate.buyExchange+" → "+candidate.sellExchange;
         const label = result.outcome === "win" ? "✅ ВИРТУАЛЬНАЯ СДЕЛКА В ПЛЮС" : result.outcome === "loss" ? "❌ ВИРТУАЛЬНАЯ СДЕЛКА В МИНУС" : "➖ НУЛЕВОЙ РЕЗУЛЬТАТ";
-        const text = "🤖 <b>A|MORE AUTO PAPER</b>\\n"+label+"\\nСтратегия: <b>"+(candidate.strategy==="triangular"?"Треугольный арбитраж":"Межбиржевой арбитраж")+"</b>\\nПара: <b>"+html(candidate.symbol)+"</b>\\nМаршрут: "+html(route)+"\\nРасчётный net до исполнения: "+Number(candidate.net).toFixed(3)+"%\\nP/L после симуляции: <b>"+(result.pnl>0?"+":"")+result.pnl.toFixed(4)+" USDT</b>\\nДемо-баланс: <b>"+result.balance.toFixed(2)+" USDT</b>\\n<i>Только виртуальное исполнение по публичным стаканам. Реальные ордера отключены.</i>";
+        const text = "🤖 <b>A|MORE AUTO PAPER</b>\n"+label+"\nСтратегия: <b>"+(candidate.strategy==="triangular"?"Треугольный арбитраж":"Межбиржевой арбитраж")+"</b>\nПара: <b>"+html(candidate.symbol)+"</b>\nМаршрут: "+html(route)+"\nРасчётный net до исполнения: "+Number(candidate.net).toFixed(3)+"%\nP/L после симуляции: <b>"+(result.pnl>0?"+":"")+result.pnl.toFixed(4)+" USDT</b>\nДемо-баланс: <b>"+result.balance.toFixed(2)+" USDT</b>\n<i>Только виртуальное исполнение по публичным стаканам. Реальные ордера отключены.</i>";
         try { await send(env,chatId,text); } catch (notifyError) { console.error("Auto PAPER notification:",notifyError); }
         return;
       } catch (error) {
@@ -365,7 +365,7 @@ async function tg(env, method, body) {
   return data.result;
 }
 const keyboard = { inline_keyboard: [
-  [{text:"◈ Открыть A|MORE Terminal",web_app:{url:"https://amore-arbitrage.hn29wknr7h.workers.dev/?v=20261121-13"}}],
+  [{text:"◈ Открыть A|MORE Terminal",web_app:{url:"https://amore-arbitrage.hn29wknr7h.workers.dev/?v=20261123-auto-paper-1"}}],
   [{text:"📊 A|MORE Arbitrage — сканировать",callback_data:"scan"}],
   [{text:"📈 A|MORE Signals — выбрать таймфрейм",callback_data:"trade_menu"}],
   [{text:"🧠 AI Committee — быстрый AI-анализ",callback_data:"trade:ai"}],
@@ -627,7 +627,7 @@ async function scheduled(env) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (request.method === "GET" && url.pathname === "/health") return Response.json({ok:true,service:"A|More Arbitrage",version:"0.2.0-ai-committee"});
+    if (request.method === "GET" && url.pathname === "/health") return Response.json({ok:true,service:"A|More Arbitrage",version:"0.3.0-auto-paper"});
     if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/app" || url.pathname === "/app/")) {
       const assetUrl = new URL("/index.html", url.origin);
       return env.ASSETS ? env.ASSETS.fetch(new Request(assetUrl, request)) : new Response("Mini App assets are not configured",{status:503});
