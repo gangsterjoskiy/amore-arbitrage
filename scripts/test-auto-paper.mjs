@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { calculateTriangularOpportunities } from "../src/auto-paper.js";
+import { AutoPaperState, calculateTriangularOpportunities } from "../src/auto-paper.js";
 
 const tickers = [
   {symbol:"BTCUSDT",bid1Price:"99900",ask1Price:"100000",bid1Size:"10",ask1Size:"10"},
@@ -36,3 +36,19 @@ const gateRows = calculateTriangularOpportunities(tickers, {
 });
 assert.equal(gateRows[0].exchange, "Gate.io");
 process.stdout.write("A|MORE auto-paper unit tests passed\n");
+
+const storageData = new Map();
+const durable = new AutoPaperState({storage:{
+  get: async key => storageData.get(key),
+  put: async (key,value) => { storageData.set(key,value); }
+}}, {});
+const doRequest = (path,body={}) => durable.fetch(new Request("https://auto-paper-state/"+path,{
+  method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)
+}));
+const savedState = {enabled:true,startedAt:100,endsAt:200,tradeCount:3};
+assert.equal((await (await doRequest("write",{state:savedState})).json()).ok,true);
+assert.deepEqual((await (await doRequest("read")).json()).state,savedState);
+assert.equal((await (await doRequest("daily-count",{day:"2026-11-23",legacyCount:2})).json()).count,2);
+assert.equal((await (await doRequest("increment-daily",{day:"2026-11-23",legacyCount:0})).json()).count,3);
+assert.equal((await (await doRequest("daily-count",{day:"2026-11-23",legacyCount:0})).json()).count,3);
+process.stdout.write("A|MORE Durable Object state tests passed\n");

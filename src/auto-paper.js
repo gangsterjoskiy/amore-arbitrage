@@ -4,13 +4,38 @@ const STATE_TTL_SECONDS = 35 * 24 * 60 * 60;
 const stateKey = chatId => "auto:paper:state:" + chatId;
 const dailyKey = (chatId, day) => "auto:paper:daily:" + chatId + ":" + day;
 
+async function stateObject(env, chatId) {
+  if (!env.AUTO_PAPER_STATE) throw new Error("Durable Object AUTO_PAPER_STATE не привязан к Worker.");
+  const id = env.AUTO_PAPER_STATE.idFromName(String(chatId));
+  return env.AUTO_PAPER_STATE.get(id);
+}
+async function stateRequest(env, chatId, action, payload = {}) {
+  const stub = await stateObject(env, chatId);
+  const response = await stub.fetch("https://auto-paper-state/" + action, {
+    method: "POST", headers: {"content-type":"application/json"},
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) throw new Error("Durable Object state error: HTTP " + response.status);
+  const result = await response.json();
+  if (result.error) throw new Error(result.error);
+  return result;
+}
+
 export async function readAutoPaper(env, chatId) {
-  const raw = await env.SUBSCRIBERS.get(stateKey(chatId));
-  if (!raw) return null;
-  try { return JSON.parse(raw); } catch { return null; }
+  const result = await stateRequest(env, chatId, "read");
+  if (result.state) return result.state;
+  // One-time, lossless migration of an existing KV state into the authoritative DO.
+  const legacy = await env.SUBSCRIBERS.get(stateKey(chatId));
+  if (!legacy) return null;
+  let state;
+  try { state = JSON.parse(legacy); } catch { return null; }
+  await stateRequest(env, chatId, "write", {state});
+  return state;
 }
 
 export async function writeAutoPaper(env, chatId, state) {
+  await stateRequest(env, chatId, "write", {state});
+  // Keep a KV discovery index for the minute Cron; the DO remains authoritative.
   const ttl = Math.max(60, Math.ceil(((state.endsAt || Date.now() + DAY_MS) - Date.now()) / 1000) + 5 * 24 * 60 * 60);
   await env.SUBSCRIBERS.put(stateKey(chatId), JSON.stringify(state), {
     expirationTtl: Math.min(STATE_TTL_SECONDS, ttl)
@@ -63,15 +88,57 @@ export async function recordAutoPaperTrade(env, chatId, trade) {
   state.lastError = null;
   await writeAutoPaper(env, chatId, state);
   const day = new Date().toISOString().slice(0, 10);
-  const key = dailyKey(chatId, day);
-  const count = Number(await env.SUBSCRIBERS.get(key) || 0) || 0;
-  await env.SUBSCRIBERS.put(key, String(count + 1), { expirationTtl: 3 * 24 * 60 * 60 });
+  const legacyCount = Number(await env.SUBSCRIBERS.get(dailyKey(chatId, day)) || 0) || 0;
+  await stateRequest(env, chatId, "increment-daily", {day, legacyCount});
   return state;
 }
 
 export async function getAutoPaperDailyCount(env, chatId, now = Date.now()) {
   const day = new Date(now).toISOString().slice(0, 10);
-  return Number(await env.SUBSCRIBERS.get(dailyKey(chatId, day)) || 0) || 0;
+  const legacyCount = Number(await env.SUBSCRIBERS.get(dailyKey(chatId, day)) || 0) || 0;
+  const result = await stateRequest(env, chatId, "daily-count", {day, legacyCount});
+  return Number(result.count) || 0;
+}
+
+// One durable, strongly consistent state object per Telegram user. Telegram is only
+// a control surface; closing the Mini App never changes this persistent state.
+export class AutoPaperState {
+  constructor(ctx, env) { this.ctx = ctx; this.env = env; }
+  async fetch(request) {
+    try {
+      const action = new URL(request.url).pathname.slice(1);
+      const body = request.method === "POST" ? await request.json() : {};
+      if (action === "read") {
+        return Response.json({state: await this.ctx.storage.get("state") || null});
+      }
+      if (action === "write") {
+        if (!body.state || typeof body.state !== "object") return Response.json({error:"Invalid state"}, {status:400});
+        await this.ctx.storage.put("state", body.state);
+        return Response.json({ok:true,state:body.state});
+      }
+      if (action === "daily-count") {
+        const key = "daily:" + String(body.day || "");
+        let count = await this.ctx.storage.get(key);
+        if (count === undefined) {
+          count = Math.max(0, Number(body.legacyCount) || 0);
+          await this.ctx.storage.put(key, count);
+        }
+        return Response.json({count});
+      }
+      if (action === "increment-daily") {
+        const key = "daily:" + String(body.day || "");
+        let count = await this.ctx.storage.get(key);
+        if (count === undefined) count = Math.max(0, Number(body.legacyCount) || 0);
+        count = Number(count) + 1;
+        await this.ctx.storage.put(key, count);
+        return Response.json({count});
+      }
+      return Response.json({error:"Unknown action"}, {status:404});
+    } catch (error) {
+      console.error("AutoPaperState:", error);
+      return Response.json({error:String(error?.message || error)}, {status:500});
+    }
+  }
 }
 
 export function calculateTriangularOpportunities(tickers, options = {}) {

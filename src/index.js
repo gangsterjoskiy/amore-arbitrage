@@ -1,5 +1,5 @@
 import { getDemoAccount, getDemoHistory, resetDemoAccount, formatDemoAccount, applyDemoResult } from "./demo.js";
-import { readAutoPaper, startAutoPaper, stopAutoPaper, recordAutoPaperTrade, getAutoPaperDailyCount, writeAutoPaper, calculateTriangularOpportunities } from "./auto-paper.js";
+import { AutoPaperState, readAutoPaper, startAutoPaper, stopAutoPaper, recordAutoPaperTrade, getAutoPaperDailyCount, writeAutoPaper, calculateTriangularOpportunities } from "./auto-paper.js";
 import { openTradingDemo, settleTradingDemos, formatOpenTrade, TIMEFRAMES } from "./paper.js";
 
 
@@ -658,6 +658,8 @@ async function scheduled(env) {
     await Promise.allSettled(list.keys.map(k => send(env,k.name.slice(5),message,{reply_markup})));
   }
 }
+export { AutoPaperState };
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
