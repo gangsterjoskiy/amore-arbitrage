@@ -1,5 +1,5 @@
 import { getDemoAccount, getDemoHistory, resetDemoAccount, formatDemoAccount, applyDemoResult } from "./demo.js";
-import { AutoPaperState, readAutoPaper, startAutoPaper, stopAutoPaper, recordAutoPaperTrade, getAutoPaperDailyCount, writeAutoPaper, calculateTriangularOpportunities } from "./auto-paper.js";
+import { AutoPaperState, readAutoPaper, startAutoPaper, stopAutoPaper, recordAutoPaperTrade, getAutoPaperDailyCount, writeAutoPaper, calculateTriangularOpportunities, applyAdverseSlippage, executionLatencyAllowed } from "./auto-paper.js";
 import { openTradingDemo, settleTradingDemos, formatOpenTrade, TIMEFRAMES } from "./paper.js";
 
 
@@ -235,12 +235,17 @@ function consumeBidBook(bids, quantity) {
 async function executeArbitragePaper(env, chatId, opportunity, quoteBudget = 100) {
   const account = await getDemoAccount(env, chatId);
   if (account.arbi.balance < quoteBudget) throw new Error("На демо-балансе A|MORE Arbitrage недостаточно средств.");
+  const executionStartedAt = Date.now();
   const [buyBook,sellBook] = await Promise.all([
     getExecutionOrderBook(opportunity.buyExchange,opportunity.symbol),
     getExecutionOrderBook(opportunity.sellExchange,opportunity.symbol)
   ]);
-  const buy = consumeAskBook(buyBook.asks,quoteBudget);
-  const sell = consumeBidBook(sellBook.bids,buy.quantity);
+  const latencyMs = Date.now() - executionStartedAt;
+  const maxLatencyMs = setting(env.MAX_PAPER_EXECUTION_LATENCY_MS,5000,60000);
+  if (!executionLatencyAllowed(latencyMs,maxLatencyMs)) throw new Error("PAPER: стаканы получены слишком медленно ("+latencyMs+" мс; лимит "+maxLatencyMs+" мс). Сделка пропущена.");
+  const slippageBps = setting(env.PAPER_ADVERSE_SLIPPAGE_BPS,10,500);
+  const buy = consumeAskBook(applyAdverseSlippage(buyBook.asks,"buy",slippageBps),quoteBudget);
+  const sell = consumeBidBook(applyAdverseSlippage(sellBook.bids,"sell",slippageBps),buy.quantity);
   const feeFor = exchange => setting(env[({Bybit:"BYBIT_TAKER_FEE",OKX:"OKX_TAKER_FEE",Kraken:"KRAKEN_TAKER_FEE","Gate.io":"GATEIO_TAKER_FEE"})[exchange]],exchange==="Gate.io"?0.2:0.1,5);
   const buyFee = feeFor(opportunity.buyExchange), sellFee = feeFor(opportunity.sellExchange);
   const buyCost = buy.quoteSpent*(1+buyFee/100);
@@ -300,29 +305,40 @@ async function executeTriangularPaper(env, chatId, opportunity, quoteBudget = 10
   const exchange = opportunity.exchange || "Gate.io";
   if (!["Gate.io","Bybit"].includes(exchange)) throw new Error("Неподдерживаемая биржа треугольного PAPER-маршрута.");
   const asset = opportunity.asset;
+  const executionStartedAt = Date.now();
   const [btcUsdtBook,assetBtcBook,assetUsdtBook] = await Promise.all([
     getExecutionOrderBook(exchange,"BTCUSDT"),
     getExecutionOrderBook(exchange,asset+"BTC"),
     getExecutionOrderBook(exchange,asset+"USDT")
   ]);
+  const latencyMs = Date.now() - executionStartedAt;
+  const maxLatencyMs = setting(env.MAX_PAPER_EXECUTION_LATENCY_MS,5000,60000);
+  if (!executionLatencyAllowed(latencyMs,maxLatencyMs)) throw new Error("PAPER: стаканы трёх рынков получены слишком медленно ("+latencyMs+" мс; лимит "+maxLatencyMs+" мс). Сделка пропущена.");
+  const slippageBps = setting(env.PAPER_ADVERSE_SLIPPAGE_BPS,10,500);
+  const btcAsks = applyAdverseSlippage(btcUsdtBook.asks,"buy",slippageBps);
+  const btcBids = applyAdverseSlippage(btcUsdtBook.bids,"sell",slippageBps);
+  const assetBtcAsks = applyAdverseSlippage(assetBtcBook.asks,"buy",slippageBps);
+  const assetBtcBids = applyAdverseSlippage(assetBtcBook.bids,"sell",slippageBps);
+  const assetUsdtAsks = applyAdverseSlippage(assetUsdtBook.asks,"buy",slippageBps);
+  const assetUsdtBids = applyAdverseSlippage(assetUsdtBook.bids,"sell",slippageBps);
   const feeKey = exchange === "Gate.io" ? "GATEIO_TAKER_FEE" : "BYBIT_TAKER_FEE";
   const fee = setting(env[feeKey],exchange === "Gate.io" ? 0.2 : 0.1,5);
   const feeFactor = 1-fee/100;
   if (feeFactor <= 0) throw new Error("Некорректная комиссия Bybit.");
   let finalUsdt, leg1, leg2, leg3;
   if (opportunity.direction === "USDT_BTC_ASSET_USDT") {
-    leg1 = consumeAskBook(btcUsdtBook.asks,quoteBudget);
+    leg1 = consumeAskBook(btcAsks,quoteBudget);
     const btcAfterFee = leg1.quantity*feeFactor;
-    leg2 = consumeAskBook(assetBtcBook.asks,btcAfterFee);
+    leg2 = consumeAskBook(assetBtcAsks,btcAfterFee);
     const assetAfterFee = leg2.quantity*feeFactor;
-    leg3 = consumeBidBook(assetUsdtBook.bids,assetAfterFee);
+    leg3 = consumeBidBook(assetUsdtBids,assetAfterFee);
     finalUsdt = leg3.quoteReceived*feeFactor;
   } else if (opportunity.direction === "USDT_ASSET_BTC_USDT") {
-    leg1 = consumeAskBook(assetUsdtBook.asks,quoteBudget);
+    leg1 = consumeAskBook(assetUsdtAsks,quoteBudget);
     const assetAfterFee = leg1.quantity*feeFactor;
-    leg2 = consumeBidBook(assetBtcBook.bids,assetAfterFee);
+    leg2 = consumeBidBook(assetBtcBids,assetAfterFee);
     const btcAfterFee = leg2.quoteReceived*feeFactor;
-    leg3 = consumeBidBook(btcUsdtBook.bids,btcAfterFee);
+    leg3 = consumeBidBook(btcBids,btcAfterFee);
     finalUsdt = leg3.quoteReceived*feeFactor;
   } else throw new Error("Неизвестное направление треугольного маршрута.");
   const pnl = Number((finalUsdt-quoteBudget).toFixed(8));
@@ -330,7 +346,7 @@ async function executeTriangularPaper(env, chatId, opportunity, quoteBudget = 10
   const updated = await applyDemoResult(env,chatId,"arbi",pnl,outcome,{
     type:"triangular_paper_execution",strategy:"triangular",symbol:opportunity.symbol,asset,
     exchange,buyExchange:exchange,sellExchange:exchange,route:opportunity.route,direction:opportunity.direction,
-    quoteBudget,feePercent:fee,finalUsdt,pnl,estimatedNetPercent:opportunity.net,
+    quoteBudget,feePercent:fee,finalUsdt,pnl,estimatedNetPercent:opportunity.net,latencyMs,adverseSlippageBps:slippageBps,
     leg1Average:leg1.averagePrice,leg2Average:leg2.averagePrice,leg3Average:leg3.averagePrice
   });
   return {pnl,outcome,balance:updated.arbi.balance,quoteBudget,finalUsdt,feePercent:fee,route:opportunity.route,exchange};
@@ -344,6 +360,17 @@ async function runAutoPaperForUser(env, chatId, state, crossOpportunities, trian
     return;
   }
   if (await env.SUBSCRIBERS.get("user:stop:"+chatId)) return;
+  if (!Number.isFinite(Number(state.paperCapital))) {
+    state.startingCapital = 10;
+    state.paperCapital = 10;
+    state.quoteBudget = 10;
+    await writeAutoPaper(env,chatId,state);
+  }
+  if (Number(state.paperCapital) <= 0.01) {
+    await stopAutoPaper(env,chatId,"paper-capital-depleted");
+    return;
+  }
+  const quoteBudget = Math.min(Number(state.quoteBudget ?? 10),Number(state.paperCapital ?? 10));
   const lockKey = "auto:paper:lock:"+chatId;
   if (await env.SUBSCRIBERS.get(lockKey)) return;
   await env.SUBSCRIBERS.put(lockKey,"1",{expirationTtl:55});
@@ -363,8 +390,8 @@ async function runAutoPaperForUser(env, chatId, state, crossOpportunities, trian
       await env.SUBSCRIBERS.put(cooldownKey,"1",{expirationTtl:300});
       try {
         const result = candidate.strategy === "triangular"
-          ? await executeTriangularPaper(env,chatId,candidate,Number(state.quoteBudget)||100)
-          : await executeArbitragePaper(env,chatId,candidate,Number(state.quoteBudget)||100);
+          ? await executeTriangularPaper(env,chatId,candidate,quoteBudget)
+          : await executeArbitragePaper(env,chatId,candidate,quoteBudget);
         await recordAutoPaperTrade(env,chatId,{outcome:result.outcome,pnl:result.pnl});
         const route = candidate.strategy === "triangular"
           ? candidate.route
