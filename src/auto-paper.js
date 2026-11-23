@@ -122,8 +122,8 @@ export function calculateTriangularOpportunities(tickers, options = {}) {
     const reverseNet = (reverseMultiplier - 1) * 100;
     const reverseDepth = Math.min(
       assetUsdt.ask * assetUsdt.askQty,
-      assetBtc.bid * assetBtc.bidQty * assetUsdt.ask,
-      btcUsdt.bid * btcUsdt.bidQty * assetUsdt.ask * assetBtc.bid
+      assetBtc.bid * assetBtc.bidQty * btcUsdt.bid,
+      btcUsdt.bid * btcUsdt.bidQty
     );
     if (Number.isFinite(reverseNet) && reverseNet >= minNetPercent && reverseDepth >= minDepthUsdt) {
       opportunities.push({

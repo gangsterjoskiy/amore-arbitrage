@@ -20,4 +20,15 @@ assert.equal(calculateTriangularOpportunities(tickers, {
 assert.equal(calculateTriangularOpportunities(tickers.slice(0, 2), {
   feePercent: 0.1, minNetPercent: 0.25, minDepthUsdt: 25
 }).length, 0);
+
+const reverseTickers = [
+  {symbol:"BTCUSDT",bid1Price:"100000",ask1Price:"100100",bid1Size:"10",ask1Size:"10"},
+  {symbol:"ETHBTC",bid1Price:"0.051",ask1Price:"0.0511",bid1Size:"100",ask1Size:"100"},
+  {symbol:"ETHUSDT",bid1Price:"4890",ask1Price:"4900",bid1Size:"100",ask1Size:"100"}
+];
+const reverseRows = calculateTriangularOpportunities(reverseTickers, {
+  feePercent: 0.1, minNetPercent: 0.25, minDepthUsdt: 400000
+});
+assert.equal(reverseRows.length, 1);
+assert.equal(reverseRows[0].direction, "USDT_ASSET_BTC_USDT");
 process.stdout.write("A|MORE auto-paper unit tests passed\n");
