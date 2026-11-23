@@ -187,7 +187,7 @@ async function getExecutionOrderBook(exchange, symbol) {
     return {asks:cleanBookLevels(data.data[0].asks),bids:cleanBookLevels(data.data[0].bids)};
   }
   if (exchange === "Gate.io") {
-    const pair = symbol.replace("USDT","_USDT");
+    const pair = symbol.endsWith("USDT") ? symbol.slice(0,-4)+"_USDT" : symbol.endsWith("BTC") ? symbol.slice(0,-3)+"_BTC" : symbol;
     const data = await fetchOrderBookJson("https://api.gateio.ws/api/v4/spot/order_book?currency_pair="+encodeURIComponent(pair)+"&limit=50","Gate.io order book");
     return {asks:cleanBookLevels(data.asks),bids:cleanBookLevels(data.bids)};
   }
@@ -256,25 +256,57 @@ async function executeArbitragePaper(env, chatId, opportunity, quoteBudget = 100
 }
 
 async function scanTriangular(env) {
-  const payload = await fetchOrderBookJson("https://api.bybit.com/v5/market/tickers?category=spot", "Bybit spot tickers");
-  if (payload.retCode !== 0 || !Array.isArray(payload.result?.list)) throw new Error(payload.retMsg || "Bybit triangular ticker response error");
-  return calculateTriangularOpportunities(payload.result.list, {
-    feePercent: setting(env.BYBIT_TAKER_FEE, 0.1, 5),
-    minNetPercent: setting(env.MIN_TRI_NET_SPREAD_PERCENT, 0.25, 20),
-    minDepthUsdt: setting(env.MIN_TOP_OF_BOOK_DEPTH_USDT, 25, 1000000)
+  const gatePair = symbol => symbol.endsWith("USDT") ? symbol.slice(0,-4)+"_USDT" : symbol.endsWith("BTC") ? symbol.slice(0,-3)+"_BTC" : symbol;
+  const getTopBook = async symbol => {
+    const pair = gatePair(symbol);
+    const payload = await fetchOrderBookJson("https://api.gateio.ws/api/v4/spot/order_book?currency_pair="+encodeURIComponent(pair)+"&limit=1","Gate.io triangular "+pair);
+    const book = {asks:cleanBookLevels(payload.asks),bids:cleanBookLevels(payload.bids)};
+    if (!book.asks.length || !book.bids.length) throw new Error("Gate.io: нет верхнего уровня стакана для "+pair);
+    return book;
+  };
+  const toTicker = (symbol,book) => ({
+    symbol,
+    bid1Price:book.bids[0][0],bid1Size:book.bids[0][1],
+    ask1Price:book.asks[0][0],ask1Size:book.asks[0][1]
   });
+  const btcUsdtBook = await getTopBook("BTCUSDT");
+  const rows = [toTicker("BTCUSDT",btcUsdtBook)];
+  const assets = await Promise.all(["ETH","SOL","BNB","XRP"].map(async asset => {
+    try {
+      const [assetBtc,assetUsdt] = await Promise.all([
+        getTopBook(asset+"BTC"),getTopBook(asset+"USDT")
+      ]);
+      return [toTicker(asset+"BTC",assetBtc),toTicker(asset+"USDT",assetUsdt)];
+    } catch(error) {
+      console.warn("Gate.io triangular market skipped:",asset,error);
+      return [];
+    }
+  }));
+  for (const group of assets) rows.push(...group);
+  const opportunities = calculateTriangularOpportunities(rows, {
+    feePercent: setting(env.GATEIO_TAKER_FEE, 0.2, 5),
+    minNetPercent: setting(env.MIN_TRI_NET_SPREAD_PERCENT, 0.25, 20),
+    minDepthUsdt: setting(env.MIN_TOP_OF_BOOK_DEPTH_USDT, 25, 1000000),
+    exchange: "Gate.io"
+  });
+  if (!rows.some(x=>x.symbol==="ETHBTC"||x.symbol==="SOLBTC"||x.symbol==="BNBBTC"||x.symbol==="XRPBTC")) {
+    throw new Error("Gate.io: не удалось получить ни одной общей BTC-кросс-пары для треугольного арбитража.");
+  }
+  return opportunities;
 }
 async function executeTriangularPaper(env, chatId, opportunity, quoteBudget = 100) {
   const account = await getDemoAccount(env, chatId);
   if (account.arbi.balance < quoteBudget) throw new Error("На демо-балансе A|MORE Arbitrage недостаточно средств.");
-  if (opportunity.exchange !== "Bybit") throw new Error("Треугольный PAPER-маршрут пока поддерживает только Bybit.");
+  const exchange = opportunity.exchange || "Gate.io";
+  if (!["Gate.io","Bybit"].includes(exchange)) throw new Error("Неподдерживаемая биржа треугольного PAPER-маршрута.");
   const asset = opportunity.asset;
   const [btcUsdtBook,assetBtcBook,assetUsdtBook] = await Promise.all([
-    getExecutionOrderBook("Bybit","BTCUSDT"),
-    getExecutionOrderBook("Bybit",asset+"BTC"),
-    getExecutionOrderBook("Bybit",asset+"USDT")
+    getExecutionOrderBook(exchange,"BTCUSDT"),
+    getExecutionOrderBook(exchange,asset+"BTC"),
+    getExecutionOrderBook(exchange,asset+"USDT")
   ]);
-  const fee = setting(env.BYBIT_TAKER_FEE,0.1,5);
+  const feeKey = exchange === "Gate.io" ? "GATEIO_TAKER_FEE" : "BYBIT_TAKER_FEE";
+  const fee = setting(env[feeKey],exchange === "Gate.io" ? 0.2 : 0.1,5);
   const feeFactor = 1-fee/100;
   if (feeFactor <= 0) throw new Error("Некорректная комиссия Bybit.");
   let finalUsdt, leg1, leg2, leg3;
@@ -297,11 +329,11 @@ async function executeTriangularPaper(env, chatId, opportunity, quoteBudget = 10
   const outcome = pnl > 0.00000001 ? "win" : pnl < -0.00000001 ? "loss" : "draw";
   const updated = await applyDemoResult(env,chatId,"arbi",pnl,outcome,{
     type:"triangular_paper_execution",strategy:"triangular",symbol:opportunity.symbol,asset,
-    exchange:"Bybit",buyExchange:"Bybit",sellExchange:"Bybit",route:opportunity.route,direction:opportunity.direction,
+    exchange,buyExchange:exchange,sellExchange:exchange,route:opportunity.route,direction:opportunity.direction,
     quoteBudget,feePercent:fee,finalUsdt,pnl,estimatedNetPercent:opportunity.net,
     leg1Average:leg1.averagePrice,leg2Average:leg2.averagePrice,leg3Average:leg3.averagePrice
   });
-  return {pnl,outcome,balance:updated.arbi.balance,quoteBudget,finalUsdt,feePercent:fee,route:opportunity.route};
+  return {pnl,outcome,balance:updated.arbi.balance,quoteBudget,finalUsdt,feePercent:fee,route:opportunity.route,exchange};
 }
 async function runAutoPaperForUser(env, chatId, state, crossOpportunities, triangularOpportunities) {
   const now = Date.now();
