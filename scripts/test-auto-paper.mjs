@@ -51,4 +51,4 @@ assert.deepEqual((await (await doRequest("read")).json()).state,savedState);
 assert.equal((await (await doRequest("daily-count",{day:"2026-11-23",legacyCount:2})).json()).count,2);
 assert.equal((await (await doRequest("increment-daily",{day:"2026-11-23",legacyCount:0})).json()).count,3);
 assert.equal((await (await doRequest("daily-count",{day:"2026-11-23",legacyCount:0})).json()).count,3);
-process.stdout.write("A|MORE Durable Object state tests passed\\n");
+process.stdout.write("A|MORE Durable Object state tests passed\n");
