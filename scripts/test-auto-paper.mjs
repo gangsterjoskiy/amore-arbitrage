@@ -31,4 +31,8 @@ const reverseRows = calculateTriangularOpportunities(reverseTickers, {
 });
 assert.equal(reverseRows.length, 1);
 assert.equal(reverseRows[0].direction, "USDT_ASSET_BTC_USDT");
+const gateRows = calculateTriangularOpportunities(tickers, {
+  feePercent: 0.2, minNetPercent: 0.25, minDepthUsdt: 25, exchange: "Gate.io"
+});
+assert.equal(gateRows[0].exchange, "Gate.io");
 process.stdout.write("A|MORE auto-paper unit tests passed\n");
