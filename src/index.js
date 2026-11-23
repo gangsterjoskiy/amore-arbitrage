@@ -255,9 +255,9 @@ async function executeArbitragePaper(env, chatId, opportunity, quoteBudget = 100
   const updated = await applyDemoResult(env,chatId,"arbi",pnl,outcome,{
     type:"arbitrage_paper_execution",symbol:opportunity.symbol,buyExchange:opportunity.buyExchange,sellExchange:opportunity.sellExchange,
     quoteBudget,quantity:buy.quantity,buyAverage:buy.averagePrice,sellAverage:sell.averagePrice,
-    buyFee,sellFee,buyCost,sellProceeds,net:opportunity.net,pnl
+    buyFee,sellFee,buyCost,sellProceeds,net:opportunity.net,latencyMs,adverseSlippageBps:slippageBps,pnl
   });
-  return {buy,sell,buyFee,sellFee,buyCost,sellProceeds,pnl,outcome,balance:updated.arbi.balance,quantity:buy.quantity,quoteBudget};
+  return {buy,sell,buyFee,sellFee,buyCost,sellProceeds,pnl,outcome,balance:updated.arbi.balance,quantity:buy.quantity,quoteBudget,latencyMs,adverseSlippageBps:slippageBps};
 }
 
 async function scanTriangular(env) {
