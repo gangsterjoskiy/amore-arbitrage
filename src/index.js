@@ -491,6 +491,7 @@ async function handle(update, env) {
   if (command === "/stop" || startArg === "stop" || action === "stop") {
     await env.SUBSCRIBERS.put("user:stop:" + chatId, "1");
     await env.SUBSCRIBERS.delete("chat:" + chatId);
+    await stopAutoPaper(env,chatId,"global-stop");
     await send(env, chatId, "🛑 <b>A|MORE STOP включён.</b> Новые демо-прогнозы и автоматические уведомления для этого аккаунта приостановлены. Уже открытый виртуальный прогноз будет рассчитан по экспирации.", {reply_markup:{inline_keyboard:[[{text:"▶️ Возобновить работу",callback_data:"resume"}],[{text:"💼 Демо-счёт",callback_data:"demo"}]]}});
   } else if (command === "/resume" || startArg === "resume" || action === "resume") {
     await env.SUBSCRIBERS.delete("user:stop:" + chatId);
@@ -505,6 +506,7 @@ async function handle(update, env) {
     } catch (e) { await send(env, chatId, "⚠️ Демо-счёт недоступен: " + html(e.message)); }
   } else if (command === "/demo_reset" || action === "demo_reset") {
     try {
+      await stopAutoPaper(env,chatId,"demo-reset");
       const account = await resetDemoAccount(env, chatId);
       await send(env, chatId, "♻️ Оба виртуальных счёта сброшены до 1 000 USDT.\n\n" + formatDemoAccount(account), {reply_markup:keyboard});
     } catch (e) { await send(env, chatId, "⚠️ Не удалось сбросить демо-счета: " + html(e.message)); }
