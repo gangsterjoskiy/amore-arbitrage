@@ -61,4 +61,4 @@ assert.equal(bidStress[0][0],99.9);
 assert.equal(executionLatencyAllowed(4999,5000),true);
 assert.equal(executionLatencyAllowed(5001,5000),false);
 assert.equal(executionLatencyAllowed(-1,5000),false);
-process.stdout.write("A|MORE execution realism tests passed\\n");
+process.stdout.write("A|MORE execution realism tests passed\n");
